@@ -1,2 +1,2 @@
 # model-watlas-disturbance
-Batchlor thesis of Antsje van der Leij
+Bachelor thesis of Antsje van der Leij
