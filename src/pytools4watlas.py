@@ -2,18 +2,17 @@
 Collection of tools for processing WATLAS data.
 
 """
+import sys
 
 import polars as pl
 from datetime import datetime, timezone
 
 
-# TODO read SQLite file
-
 def get_watlas_data(tags, tracking_time_start, tracking_time_end,
                     sqlite_file='sqlite://../data/SQLite/watlas-2023.sqlite'):
     """
     Get watlas data from a local SQLite database file and return it as a polars dataframe.
-    Results will be filtered to fit between start and end time and on given tag list.
+    Results will be filtered to fit between start.
     Args:
         tags (list): list of WATLAS tags
         tracking_time_start (str): start of tracking time
@@ -50,9 +49,11 @@ def get_watlas_data(tags, tracking_time_start, tracking_time_end,
     # run query on sqlite file and get polars dataframe
     raw_watlas_df = pl.read_database_uri(query, sqlite_file)
 
-    # check if time is the same as input
-    start_time = datetime.utcfromtimestamp(tracking_time_start / 1000)
-    end_time = datetime.utcfromtimestamp(tracking_time_end / 1000)
+    # check if dataframe is empty
+    if raw_watlas_df.shape[0] == 0:
+        # let user know and exit
+        print("No data found in SQLite file for given tags and times.")
+        sys.exit(1)
 
     return raw_watlas_df
 
