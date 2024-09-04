@@ -61,10 +61,10 @@ def get_watlas_data(tags, tracking_time_start, tracking_time_end,
 # TODO get speed
 def get_simple_distance(watlas_df):
     """
-    Gets the Euclidean distance between consecutive localization in a coordinate
+    Gets the Euclidean distance in meters between consecutive localization in a coordinate.
 
     Args:
-        watlas_df (pl.DataFrame): a polars dataframe containing WATLAS data:
+        watlas_df (pl.DataFrame): a polars dataframe containing WATLAS data
 
     Returns:
         dist_series: a polars series with euclidian distances.
@@ -73,7 +73,7 @@ def get_simple_distance(watlas_df):
 
     dist_series = (
         (
-            # get the difference between the current coordinate and the next coordinate using shift
+            # get the difference between the current coordinate and the next coordinate in the X and Y columns
             # multiply by the power of 2
             (watlas_df["X"] - watlas_df["X"].shift(1)) ** 2 +
             (watlas_df["Y"] - watlas_df["Y"].shift(1)) ** 2
@@ -84,7 +84,26 @@ def get_simple_distance(watlas_df):
 
 
 def get_speed(watlas_df):
-    ...
+    """
+    Calculate speed in meters per second for a watlas dataframe.
+
+    Args:
+        watlas_df (pl.DataFrame): a polars dataframe containing WATLAS data
+
+    Returns:
+        dist_series: a polars series with speed in meters per second.
+
+    """
+    # get distance
+    distance = get_simple_distance(watlas_df)
+    # get the time interval between rows in the "TIME" column
+    time = (watlas_df["TIME"] - watlas_df["TIME"].shift(1)) / 1000
+    # calculate speed
+    speed = distance / time
+
+    return speed
+
+
 
 
 # TODO get turn angle
@@ -98,6 +117,5 @@ if __name__ == '__main__':
                            tracking_time_start="2023-08-21 09:00:00",
                            tracking_time_end="2023-08-21 10:20:00")
     print("watlas data found: ")
-    print(data)
 
-    get_simple_distance(data)
+    print(get_speed(data))
