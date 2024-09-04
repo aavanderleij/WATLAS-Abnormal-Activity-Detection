@@ -12,7 +12,18 @@ def get_watlas_data(tags, tracking_time_start, tracking_time_end,
                     sqlite_file='sqlite://../data/SQLite/watlas-2023.sqlite'):
     """
     Get watlas data from a local SQLite database file and return it as a polars dataframe.
-    Results will be filtered to fit between start.
+    Results will be of the specified tags and filtered to fit between start time and end time.
+
+    Dataframe legend:
+    TAG 	=	11 digit WATLAS tag ID
+    TIME	=	UNIX time (milliseconds)
+    X		=	X-ccordinates in meters (utm 31 N)
+    Y		=	Y-ccordinates in meters (utm 31 N)
+    NBS		=	Number of Base Stations used in calculating coordinates
+    VARX	=	Variance in estimating X-coordinates
+    VARY	=	Variance in estimating Y-coordinates
+    COVXY	=	Co-variance between X- and Y-coordinates
+
     Args:
         tags (list): list of WATLAS tags
         tracking_time_start (str): start of tracking time
@@ -20,7 +31,8 @@ def get_watlas_data(tags, tracking_time_start, tracking_time_end,
         sqlite_file:
 
     Returns:
-        raw_watlas_df (pd.DataFrame): a polars dataframe containing WATLAS data
+        raw_watlas_df (pd.DataFrame): a polars dataframe with localizations of the specified tag,
+         filtered between the start and end times.
 
     """
 
@@ -57,8 +69,6 @@ def get_watlas_data(tags, tracking_time_start, tracking_time_end,
 
     return raw_watlas_df
 
-
-# TODO get speed
 def get_simple_distance(watlas_df):
     """
     Gets the Euclidean distance in meters between consecutive localization in a coordinate.
@@ -102,9 +112,6 @@ def get_speed(watlas_df):
     speed = distance / time
 
     return speed
-
-
-
 
 # TODO get turn angle
 
