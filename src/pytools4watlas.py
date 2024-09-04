@@ -52,13 +52,40 @@ def get_watlas_data(tags, tracking_time_start, tracking_time_end,
     # check if dataframe is empty
     if raw_watlas_df.shape[0] == 0:
         # let user know and exit
-        print("No data found in SQLite file for given tags and times.")
+        print("No data found in SQLite file for given tags and times. No data to process.")
         sys.exit(1)
 
     return raw_watlas_df
 
 
 # TODO get speed
+def get_simple_distance(watlas_df):
+    """
+    Gets the Euclidean distance between consecutive localization in a coordinate
+
+    Args:
+        watlas_df (pl.DataFrame): a polars dataframe containing WATLAS data:
+
+    Returns:
+        dist_series: a polars series with euclidian distances.
+
+    """
+
+    dist_series = (
+        (
+            # get the difference between the current coordinate and the next coordinate using shift
+            # multiply by the power of 2
+            (watlas_df["X"] - watlas_df["X"].shift(1)) ** 2 +
+            (watlas_df["Y"] - watlas_df["Y"].shift(1)) ** 2
+        ) ** 0.5  # multiply by power of 0.5 to get square root, to get euclidian distance
+    )
+
+    return dist_series
+
+
+def get_speed(watlas_df):
+    ...
+
 
 # TODO get turn angle
 
@@ -72,3 +99,5 @@ if __name__ == '__main__':
                            tracking_time_end="2023-08-21 10:20:00")
     print("watlas data found: ")
     print(data)
+
+    get_simple_distance(data)
