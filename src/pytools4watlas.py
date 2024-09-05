@@ -4,8 +4,10 @@ Collection of tools for processing WATLAS data.
 """
 import sys
 
+import numpy as np
 import polars as pl
 from datetime import datetime, timezone
+import math
 
 
 def get_watlas_data(tags, tracking_time_start, tracking_time_end,
@@ -69,6 +71,7 @@ def get_watlas_data(tags, tracking_time_start, tracking_time_end,
 
     return raw_watlas_df
 
+
 def get_simple_distance(watlas_df):
     """
     Gets the Euclidean distance in meters between consecutive localization in a coordinate.
@@ -82,12 +85,12 @@ def get_simple_distance(watlas_df):
     """
 
     dist_series = (
-        (
-            # get the difference between the current coordinate and the next coordinate in the X and Y columns
-            # multiply by the power of 2
-            (watlas_df["X"] - watlas_df["X"].shift(1)) ** 2 +
-            (watlas_df["Y"] - watlas_df["Y"].shift(1)) ** 2
-        ) ** 0.5  # multiply by power of 0.5 to get square root, to get euclidian distance
+            (
+                # get the difference between the current coordinate and the next coordinate in the X and Y columns
+                # multiply by the power of 2
+                    (watlas_df["X"] - watlas_df["X"].shift(1)) ** 2 +
+                    (watlas_df["Y"] - watlas_df["Y"].shift(1)) ** 2
+            ) ** 0.5  # multiply by power of 0.5 to get square root, to get euclidian distance
     )
 
     return dist_series
@@ -113,6 +116,43 @@ def get_speed(watlas_df):
 
     return speed
 
+
+def get_turn_angle(watlas_df):
+    # Create lagged versions of X
+    x1 = watlas_df["X"][:-2]
+    x2 = watlas_df["X"][1:-1]
+    x3 = watlas_df["X"][2:]
+
+    # Create lagged version of Y
+    y1 = watlas_df["Y"][:-2]
+    y2 = watlas_df["Y"][1:-1]
+    y3 = watlas_df["Y"][2:]
+
+    dist_x1_x2 = np.sqrt(((x2 - x1) ** 2) + ((y2 - y1) ** 2))
+    dist_x2_x3 = np.sqrt(((x3 - x2) ** 2) + ((y3 - y2) ** 2))
+    dist_x3_x1 = np.sqrt(((x3 - x1) ** 2) + ((y3 - y1) ** 2))
+
+    angle = np.acos((
+                            (dist_x1_x2 ** 2) +
+                            (dist_x2_x3 ** 2) -
+                            (dist_x3_x1 ** 2)
+                    ) /
+                    (2 * dist_x1_x2 * dist_x2_x3)
+                    )
+
+    # convert to degrees
+    angle = angle * 180 / math.pi
+
+    # subtract from 180 to get the external angle
+    angle = 180 - angle
+
+    # insert np at the end and begingin to keep length of array the same a the dataframe
+    angle = np.insert(angle, 0, np.nan)
+    angle = np.append(angle, np.nan)
+
+    return angle
+
+
 # TODO get turn angle
 
 # TODO thin data
@@ -121,8 +161,16 @@ def get_speed(watlas_df):
 
 if __name__ == '__main__':
     data = get_watlas_data([3001],
-                           tracking_time_start="2023-08-21 09:00:00",
+                           tracking_time_start="2023-08-21 09:20:00",
                            tracking_time_end="2023-08-21 10:20:00")
     print("watlas data found: ")
+    print(data)
 
+    print()
+    print("speed:")
     print(get_speed(data))
+    print()
+    print("turn angle:")
+    print(get_turn_angle(data))
+
+    get_turn_angle(data)
