@@ -71,6 +71,11 @@ def get_watlas_data(tags, tracking_time_start, tracking_time_end,
 
     return raw_watlas_df
 
+def get_datetime(watlas_df):
+    watlas_df = watlas_df.with_columns(
+        pl.from_epoch(pl.col("TIME"), time_unit="ms").alias("timestamp")
+    )
+    return watlas_df
 
 def get_simple_distance(watlas_df):
     """
@@ -118,6 +123,18 @@ def get_speed(watlas_df):
 
 
 def get_turn_angle(watlas_df):
+    """
+    Calculate turn angle in degrees for a watlas dataframe.
+    Using the law of cosines this function returns the turning angle in degrees based on the x an y coordinates.
+    Negative  degrees indicate left turns (counter-clockwise)
+
+    Args:
+        watlas_df (pl.DataFrame): a polars dataframe containing WATLAS data
+
+    Returns:
+        angle: a numpy array with turning angle in degrees.
+
+    """
     # Create lagged versions of X
     x1 = watlas_df["X"][:-2]
     x2 = watlas_df["X"][1:-1]
@@ -146,31 +163,52 @@ def get_turn_angle(watlas_df):
     # subtract from 180 to get the external angle
     angle = 180 - angle
 
-    # insert np at the end and begingin to keep length of array the same a the dataframe
+    # insert np at the end and beginning to keep length of array the same as the dataframe
     angle = np.insert(angle, 0, np.nan)
     angle = np.append(angle, np.nan)
 
     return angle
 
+def aggregate_dataframe(watlas_df, interval="15s"):
+    """
+    Aggregate a polars dataframe containing WATLAS data to the time specified interval.
+    This thins the data
+    """
+    # group dataframe by time into intervals
+    watlas_df = watlas_df.group_by_dynamic("timestamp", every=interval, group_by="TAG").agg(
+        [
+            # aggregate columns X, Y and NBS by getting the mean of those values per interval
+            # TODO check what to do with COVXY (tool4watlas just takes the mean)
+            pl.col("X", "Y", "NBS", "COVXY").mean(),
+            # the variance of an average is the sum of variances / sample size square
+            (pl.col("VARX").sum() / (pl.col("VARX").count() ** 2)).alias("VARX"),
+            (pl.col("VARY").sum() / (pl.col("VARY").count() ** 2)).alias("VARY"),
+        ]
+    )
 
-# TODO get turn angle
+    # set float to full prevent scientifict notation of numbers
+    pl.Config(set_fmt_float="full")
+    return watlas_df
 
-# TODO thin data
 
-# TODO filter data
+
+
 
 if __name__ == '__main__':
+    # TODO time process
     data = get_watlas_data([3001],
                            tracking_time_start="2023-08-21 09:20:00",
                            tracking_time_end="2023-08-21 10:20:00")
     print("watlas data found: ")
     print(data)
+    data = get_datetime(data)
 
-    print()
-    print("speed:")
-    print(get_speed(data))
-    print()
-    print("turn angle:")
-    print(get_turn_angle(data))
-
-    get_turn_angle(data)
+    #
+    # print()
+    # print("speed:")
+    # print(get_speed(data))
+    # print()
+    # print("turn angle:")
+    # print(get_turn_angle(data))
+    print("aggrage data")
+    aggregate_dataframe(data)
