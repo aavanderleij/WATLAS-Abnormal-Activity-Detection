@@ -8,6 +8,7 @@ import numpy as np
 import polars as pl
 from datetime import datetime, timezone
 import math
+import timeit
 
 
 def get_watlas_data(tags, tracking_time_start, tracking_time_end,
@@ -69,13 +70,17 @@ def get_watlas_data(tags, tracking_time_start, tracking_time_end,
         print("No data found in SQLite file for given tags and times. No data to process.")
         sys.exit(1)
 
+    raw_watlas_df = get_datetime(raw_watlas_df)
+
     return raw_watlas_df
+
 
 def get_datetime(watlas_df):
     watlas_df = watlas_df.with_columns(
         pl.from_epoch(pl.col("TIME"), time_unit="ms").alias("timestamp")
     )
     return watlas_df
+
 
 def get_simple_distance(watlas_df):
     """
@@ -169,40 +174,86 @@ def get_turn_angle(watlas_df):
 
     return angle
 
+
 def aggregate_dataframe(watlas_df, interval="15s"):
     """
     Aggregate a polars dataframe containing WATLAS data to the time specified interval.
-    This thins the data
+    This thins the data to only have rows with given intervals.
+
+    Args:
+        watlas_df (pl.DataFrame): a polars dataframe containing WATLAS data
+        interval (str): the time interval to aggregate (default 15 seconds)
+
+    Returns:
+        dist_series: a polars series with euclidian distances.
     """
-    # group dataframe by time into intervals
+    # TODO check if behavior is desired. atl_thin_data does always not give the same result but this more of how I
+    #  would expect it to work. atl_thin_data uses a rounded TIME to bucket its data and this uses left leaning
+    #  timestamp to group dataframe by time into intervals. This gives more even timestamps.
     watlas_df = watlas_df.group_by_dynamic("timestamp", every=interval, group_by="TAG").agg(
         [
             # aggregate columns X, Y and NBS by getting the mean of those values per interval
-            # TODO check what to do with COVXY (tool4watlas just takes the mean)
-            pl.col("X", "Y", "NBS", "COVXY").mean(),
+            # drop COVXY, covariance loses meaning if an average is taken.
+            # TIME is now the average unix time
+            pl.col("*").exclude("VARX", "VARY", "COVXY").mean(),
             # the variance of an average is the sum of variances / sample size square
             (pl.col("VARX").sum() / (pl.col("VARX").count() ** 2)).alias("VARX"),
             (pl.col("VARY").sum() / (pl.col("VARY").count() ** 2)).alias("VARY"),
         ]
     )
 
-    # set float to full prevent scientifict notation of numbers
+    # set float to full avoid scientific notation of numbers
     pl.Config(set_fmt_float="full")
     return watlas_df
 
 
+def smooth_data(watlas_df, moving_window=5):
+    """
+    Applies a median smooth defined by a rolling window to the X and Y
 
+    Args:
+        watlas_df (pl.DataFrame): a polars dataframe containing WATLAS data:
+        moving_window (int): the window size:
+
+    Returns:
+        smooth_df: a polars dataframe with median smoothed data.
+
+    """
+    # TODO there is a shift in the smoothing compard to the r function runmed form the stats librabry. needs discussion.
+    smooth_df = watlas_df.with_columns(
+        pl.col("X").alias("X_raw"),  # Keep original values
+        pl.col("Y").alias("Y_raw"),  # Keep original values
+        # Apply the forward and reverse rolling median on X
+        pl.col("X")
+        .reverse()
+        .rolling_median(window_size=moving_window, min_periods=1)
+        .reverse()
+        .rolling_median(window_size=moving_window, min_periods=1)
+        .alias("X"),
+        # Apply the forward and reverse rolling median on Y
+        pl.col("Y")
+        .reverse()
+        .rolling_median(window_size=moving_window, min_periods=1)
+        .reverse()
+        .rolling_median(window_size=moving_window, min_periods=1)
+    )
+
+    return smooth_df
 
 
 if __name__ == '__main__':
     # TODO time process
-    data = get_watlas_data([3001],
-                           tracking_time_start="2023-08-21 09:20:00",
-                           tracking_time_end="2023-08-21 10:20:00")
-    print("watlas data found: ")
-    print(data)
-    data = get_datetime(data)
+    start = timeit.default_timer()
+    # data = get_watlas_data([3001],
+    #                        tracking_time_start="2023-08-21 09:20:00",
+    #                        tracking_time_end="2023-08-21 10:20:00")
 
+    data = get_watlas_data([3001],
+                           tracking_time_start="2023-08-01 00:00:00",
+                           tracking_time_end="2023-08-21 00:00:00")
+
+    # print("watlas data found: ")
+    # print(data)
     #
     # print()
     # print("speed:")
@@ -211,4 +262,12 @@ if __name__ == '__main__':
     # print("turn angle:")
     # print(get_turn_angle(data))
     print("aggrage data")
-    aggregate_dataframe(data)
+    argg_data = aggregate_dataframe(data)
+    smooth_df = (smooth_data(data))
+    print(smooth_df)
+    print(smooth_df.select("X").head())
+    stop = timeit.default_timer()
+
+
+
+    print('Time: ', stop - start)
