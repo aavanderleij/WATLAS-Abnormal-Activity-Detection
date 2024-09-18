@@ -85,7 +85,6 @@ def get_datetime(watlas_df):
     )
     return watlas_df
 
-
 def get_simple_distance(watlas_df):
     """
     Gets the Euclidean distance in meters between consecutive localization in a coordinate.
@@ -107,7 +106,9 @@ def get_simple_distance(watlas_df):
             ) ** 0.5  # multiply by power of 0.5 to get square root, to get euclidian distance
     )
 
-    return dist_series
+    # add dist to dataframe
+    watlas_df = watlas_df.with_columns(dist_series.alias("distance"))
+    return watlas_df
 
 
 def get_speed(watlas_df):
@@ -121,14 +122,21 @@ def get_speed(watlas_df):
         dist_series: a polars series with speed in meters per second.
 
     """
+    # check if distance is already calculated
+    if "distance" not in watlas_df.columns:
+        watlas_df = get_simple_distance(watlas_df)
+
+    print(watlas_df)
     # get distance
-    distance = get_simple_distance(watlas_df)
+    distance = watlas_df["distance"]
     # get the time interval between rows in the "TIME" column
     time = (watlas_df["TIME"] - watlas_df["TIME"].shift(1)) / 1000
     # calculate speed
     speed = distance / time
 
-    return speed
+    watlas_df = watlas_df.with_columns(speed.alias("speed"))
+    return watlas_df
+
 
 
 def get_turn_angle(watlas_df):
@@ -176,7 +184,8 @@ def get_turn_angle(watlas_df):
     angle = np.insert(angle, 0, np.nan)
     angle = np.append(angle, np.nan)
 
-    return angle
+    watlas_df = watlas_df.with_columns(pl.Series(angle).alias("turn_angle"))
+    return watlas_df
 
 
 def aggregate_dataframe(watlas_df, interval="15s"):
@@ -246,19 +255,26 @@ def smooth_data(watlas_df, moving_window=5):
 
 
 def get_tag_data(tag_csv_path):
+    """
+    read exel file (.xmlx containing tag data
+    Args:
+        tag_csv_path (str): the tag csv file path:
 
+    Returns:
+        tag_df: a polars dataframe with tag data from tag file.
+
+    """
     # TODO check if file exist and contains right columns
     tag_df = pl.read_excel(tag_csv_path)
     print(tag_df.columns)
 
     return tag_df
 
-def get_species(tag_df, watlas_df):
 
-    watlas_df = watlas_df.join(tag_df.select(["tag","species"]), on="tag", how="left")
+def get_species(tag_df, watlas_df):
+    watlas_df = watlas_df.join(tag_df.select(["tag", "species"]), on="tag", how="left")
 
     print(watlas_df)
-
 
 
 if __name__ == '__main__':
@@ -268,21 +284,22 @@ if __name__ == '__main__':
     #                        tracking_time_start="2023-08-21 09:20:00",
     #                        tracking_time_end="2023-08-21 10:20:00")
 
-    data = get_watlas_data([3001],
+    data = get_watlas_data([3001, 3002, 3016],
                            tracking_time_start="2023-08-01 00:00:00",
                            tracking_time_end="2023-08-21 00:00:00")
 
+    print(data.unique(subset="TAG"))
     tag_df = get_tag_data("../data/watlas_data/tags_watlas_all.xlsx")
     get_species(tag_df, data)
-    # print("watlas data found: ")
-    # print(data)
-    #
-    # print()
-    # print("speed:")
-    # print(get_speed(data))
-    # print()
-    # print("turn angle:")
-    # print(get_turn_angle(data))
+    print("watlas data found: ")
+    print(data)
+
+    print()
+    print("speed:")
+    print(get_speed(data))
+    print()
+    print("turn angle:")
+    print(get_turn_angle(data))
     # print("aggrage data")
     # argg_data = aggregate_dataframe(data)
     # smooth_df = (smooth_data(data))
