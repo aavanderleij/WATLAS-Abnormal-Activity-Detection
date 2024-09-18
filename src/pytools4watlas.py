@@ -70,6 +70,10 @@ def get_watlas_data(tags, tracking_time_start, tracking_time_end,
         print("No data found in SQLite file for given tags and times. No data to process.")
         sys.exit(1)
 
+    # add short tag number column
+    raw_watlas_df = raw_watlas_df.with_columns(
+        pl.col("TAG").cast(pl.String).str.slice(-4).cast(pl.Int64).alias("tag"))
+
     raw_watlas_df = get_datetime(raw_watlas_df)
 
     return raw_watlas_df
@@ -241,8 +245,24 @@ def smooth_data(watlas_df, moving_window=5):
     return smooth_df
 
 
+def get_tag_data(tag_csv_path):
+
+    # TODO check if file exist and contains right columns
+    tag_df = pl.read_excel(tag_csv_path)
+    print(tag_df.columns)
+
+    return tag_df
+
+def get_species(tag_df, watlas_df):
+
+    watlas_df = watlas_df.join(tag_df.select(["tag","species"]), on="tag", how="left")
+
+    print(watlas_df)
+
+
+
 if __name__ == '__main__':
-    # TODO time process
+    # time process
     start = timeit.default_timer()
     # data = get_watlas_data([3001],
     #                        tracking_time_start="2023-08-21 09:20:00",
@@ -252,6 +272,8 @@ if __name__ == '__main__':
                            tracking_time_start="2023-08-01 00:00:00",
                            tracking_time_end="2023-08-21 00:00:00")
 
+    tag_df = get_tag_data("../data/watlas_data/tags_watlas_all.xlsx")
+    get_species(tag_df, data)
     # print("watlas data found: ")
     # print(data)
     #
@@ -261,13 +283,11 @@ if __name__ == '__main__':
     # print()
     # print("turn angle:")
     # print(get_turn_angle(data))
-    print("aggrage data")
-    argg_data = aggregate_dataframe(data)
-    smooth_df = (smooth_data(data))
-    print(smooth_df)
-    print(smooth_df.select("X").head())
+    # print("aggrage data")
+    # argg_data = aggregate_dataframe(data)
+    # smooth_df = (smooth_data(data))
+    # print(smooth_df)
+    # print(smooth_df.select("X").head())
     stop = timeit.default_timer()
-
-
 
     print('Time: ', stop - start)
