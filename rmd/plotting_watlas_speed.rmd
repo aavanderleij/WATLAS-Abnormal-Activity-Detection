@@ -1,0 +1,292 @@
+---
+title: "Plotting_watlas_speed"
+author: "Antsje van der Leij"
+date: "2024-08-08"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r loading packages}
+## install packages
+# install.packages("devtools")
+# devtools::install_github("aavanderleij/tools4watlas@feature_video_tracks")
+# install.packages("lubridate")
+
+
+## load packages
+library(tools4watlas)
+library(readxl)
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+
+```
+
+
+
+```{r tag processing}
+tag_df<-as.data.frame(readxl::read_excel("../data/watlas_data/tags_watlas_all.xlsx"))
+
+tag_df <- tag_df[!is.na(tag_df$species),]
+tag_list_all <- tag_df$tag
+
+#> specify format of tag numbers
+tag_list_all<-stringr::str_pad(
+                    as.character(tag_list_all),
+                    4, #> WATLAS tag string is four characters
+                    pad = "0"
+                    )
+tag_list_all <- tag_list_all[!is.na(tag_list_all)]
+# for collecting data from server, long tag format is used
+server_tag_list_all<-paste0("3100100", tag_list_all)
+
+#> depending on the tag selection, the species need to be taken from the metadata
+tag_idx<-match(tag_list_all, tag_df$tag)
+species_all<-tag_df$species[tag_idx]
+
+
+
+```
+
+
+```{r get data from local SQLite file}
+
+# get SQLite file
+SQLiteDB=paste0("../data/SQLite/",
+                "watlas-2023",
+                ".sqlite")
+
+# set up database connection
+MyDBconnection <- RSQLite::dbConnect(RSQLite::SQLite(),SQLiteDB)
+
+
+# set window of time to get the data, convert to watlas time format
+# start <- format(with_tz("2023-08-21 09:20:00" , tzone="UTC"), "%Y-%m-%d %H:%M:%S")
+# end <- format(with_tz("2023-08-21 10:20:00", tzone="UTC"), "%Y-%m-%d %H:%M:%S")
+
+start <- format("2023-08-21 09:00:00")
+end <- format("2023-08-21 11:00:00")
+
+# get data from SQLite file
+ldf_raw<- lapply(
+                server_tag_list_all,
+                atl_get_data,
+                tracking_time_start = start,
+                tracking_time_end = end,
+                timezone = "UTC",
+                SQLiteDB = SQLiteDB,
+                use_connection = MyDBconnection
+                )
+```
+
+
+```{r preproces watlas data}
+#filter list for minimum number of localizations per bird
+min_locs <- 10                   # specify minimum
+ldf_n <- lapply(ldf_raw, nrow) # count localizations per bird
+ldf_n[lengths(ldf_n) == 0] <- 0 # replace NULL counts for 0
+n <- unlist(ldf_n)              # create vector of counts
+ldf <- ldf_raw[n>=min_locs]# filter number of localizations
+tag_list <- tag_list_all[n>=min_locs]       # clean tag vector
+species<-species_all[n>=min_locs]   # clean species vector
+
+VARmax  <- 2000 # variance limit in meters squared
+speed_max <- 30 # meters per second
+
+ldf_speed_in <- lapply(
+                  ldf,
+                  atl_get_speed,
+                  time="TIME",
+                  type="in"
+                  )
+
+    ldf_speed_out <- lapply(
+                  ldf,
+                  atl_get_speed,
+                  time="TIME",
+                  type="out"
+                  )
+    # add speed_in to the ldf data
+    for(i in seq_along(ldf_speed_in)){
+      ldf[[i]]$speed_in <- ldf_speed_in[[i]]
+      ldf[[i]]$speed_out <- ldf_speed_out[[i]]
+    }
+
+# clean localisation errors
+ldf_clean <- lapply(
+                ldf,
+                atl_filter_covariates,
+                filters = c(
+                        "VARX < VARmax",
+                        "VARY < VARmax",
+                        "speed_in < speed_max" 
+                            )
+                        )
+
+ldf_thinned <- lapply(
+                          ldf_clean,
+                          atl_thin_data,
+                          interval = 15,
+                          id_columns = c("tag"),
+                          method="aggregate"
+                          )
+
+# apply a median smoother
+med_filter <- 5 # number of localizations within window for smoothing
+ldf_smoothed <- lapply(
+                    ldf_clean,
+                    atl_median_smooth,
+                    time = "TIME",
+                    moving_window = med_filter
+                    )
+
+# get turning angle
+ldf_angle <- lapply(
+                    ldf_smoothed,
+                    atl_turning_angle,
+                    time = "TIME",
+                    )
+
+    # add speed_in to the ldf data
+    for(i in seq_along(ldf_angle)){
+      ldf[[i]]$speed_in <- ldf_trun[[i]]
+      ldf[[i]]$speed_out <- ldf_speed_out[[i]]
+    }
+
+```
+
+```{r plot speed}
+
+big_ldf<-bind_rows(ldf_thinned, .id = "df_id")
+
+early_time <- min(big_ldf$TIME)
+latest_time <- max(big_ldf$TIME)
+
+time_range <- seq(early_time, latest_time, by=15)
+
+# remove points with a speed lower then 1 meter per second
+# big_ldf <- big_ldf[big_ldf$speed_in > 1,]
+# set max speed to 50 meter per second 
+big_ldf$speed_in[big_ldf$speed_in > 50] <- 50
+
+
+library(ggplot2)
+ggplot(big_ldf, aes(x = TIME, y = speed_in)) +
+  geom_line() +
+  labs(title = "Speed for Each location point", x = "time", y = "Speed") +
+  theme_minimal() +
+  xlim(early_time, latest_time) +
+  theme(legend.position = "none")  # Remove the legend
+
+
+lapply(ldf_thinned, function(df) {
+  ggplot(df, aes(x = TIME, y = speed_in)) +
+    geom_line() +
+    geom_point() +
+    labs(title = paste0("Speed for Each Location Point " , df$tag), x = "Time", y = "speed") +
+    theme_minimal() +
+    xlim(early_time, latest_time) +
+    ylim(0, 40) +
+    theme(legend.position = "none")})
+
+# lapply(ldf_thinned, function(df) {
+#   ggplot(df, aes(x = TIME, y = X)) +
+#     geom_line() +
+#     geom_point() +
+#     labs(title = paste0("X for Each Location Point " , df$tag), x = "Time", y = "X") +
+#     theme_minimal() +
+#     theme(legend.position = "none")})
+
+hist(big_ldf$speed_in, breaks = 50)
+write.csv(big_ldf, "C:/Users/avanderleij/OneDrive - NIOZ/Bureaublad/WATLAS_disturbance/training_data/label_test.csv", row.names = FALSE )
+
+```
+
+```{r video}
+#> convert to spatial data frames
+#> to utm for easy analyses
+ldf_utm <- lapply(ldf_thinned, atlas_make_spatialdataframe)
+#> to osm for easy plotting
+ldf_osm <- lapply(ldf_utm, sp::spTransform, OpenStreetMap::osm())
+
+# make videos with one bird that is colod red to label
+for (i in 1:length(tag_list)){
+  tag_colors <- rep("blue",length(tag_list))
+  tag_colors[i] <- "red"
+  
+  # video name
+name <- paste("test_video",
+   	           format(with_tz(start, tzone="UTC"), "%Y-%m-%d_%H-%M-%S"),
+              tag_list[i],
+   	           sep="-")
+
+# make video
+video_tracks(ldf_osm,
+             dt=30,
+             trail=10,
+             PAST_LINES = FALSE,
+             IDs=tag_list,
+             ppi=96,
+             Save=TRUE,
+             frames_s=5,
+             pad="C:/Users/avanderleij/OneDrive - NIOZ/Bureaublad/WATLAS_disturbance/track_videos/single_bird_disturbance_check/",
+             name=name,
+             tg_cols=tag_colors,
+             species=NULL,
+             LEGEND="topleft",
+             bbox=NULL, # take from data
+             tmp_PNGs=FALSE)
+  
+}
+
+
+
+
+```
+
+```{r}
+
+#make traning data frame
+
+big_ldf$alert <- NA
+
+# set alert to 0 if not part of disturbance
+big_ldf$alert[big_ldf$tag == "3149"] <- 0
+# set big disturbance event
+big_ldf$large_disturb[big_ldf$alert == 0] <- 0
+big_ldf$large_disturb
+# set small disturbance event
+big_ldf$small_disturb[big_ldf$alert == 0] <- 0
+
+write.csv(big_ldf, "C:/Users/avanderleij/OneDrive - NIOZ/Bureaublad/WATLAS_disturbance/training_data/label_test.csv", row.names = FALSE )
+
+
+```
+
+```{r}
+
+label_df <- read.csv2("C:/Users/avanderleij/OneDrive - NIOZ/Bureaublad/WATLAS_disturbance/training_data/train_data_frame.csv", sep = ",")
+
+label_tag_list <- unique(label_df$tag)
+
+for (i in seq_len(length(label_tag_list))){
+  tag_id <- label_tag_list[i]
+  single_tag_df <- label_df[label_df$tag == tag_id,]
+  # get turn angle
+  single_tag_df$X <- as.numeric(single_tag_df$X)
+  single_tag_df$Y <- as.numeric(single_tag_df$Y)
+  turn_angles <- atl_turning_angle(single_tag_df,
+                                  X = "X",
+                                  Y = "Y",
+                                  time = "TIME")
+
+  label_df$turn_angle[label_df$tag == tag_id] <- turn_angles
+}
+
+write.csv(label_df, "C:/Users/avanderleij/OneDrive - NIOZ/Bureaublad/WATLAS_disturbance/training_data/label_test_angle.csv", row.names = FALSE )
+```
+
+
+
