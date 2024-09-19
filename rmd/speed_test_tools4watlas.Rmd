@@ -1,0 +1,123 @@
+---
+title: "speed_test_tools4watlas"
+author: "Antsje van der Leij"
+date: "2024-09-13"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r loading packages}
+## install packages
+# install.packages("devtools")
+# devtools::install_github("aavanderleij/tools4watlas@feature_video_tracks")
+# install.packages("lubridate")
+
+
+## load packages
+library(tools4watlas)
+library(readxl)
+library(lubridate)
+library(dplyr)
+library(ggplot2)
+
+```
+
+
+``` {r get data from local SQLite file}
+run_time_start <- Sys.time()
+tag_df<-as.data.frame(readxl::read_excel("../data/watlas_data/tags_watlas_all.xlsx"))
+
+# get SQLite file
+SQLiteDB=paste0("../data/SQLite/",
+                "watlas-2023",
+                ".sqlite")
+
+# set up database connection
+MyDBconnection <- RSQLite::dbConnect(RSQLite::SQLite(),SQLiteDB)
+
+
+# set window of time to get the data, convert to watlas time format
+# start <- format(with_tz("2023-08-21 09:20:00" , tzone="UTC"), "%Y-%m-%d %H:%M:%S")
+# end <- format(with_tz("2023-08-21 10:20:00", tzone="UTC"), "%Y-%m-%d %H:%M:%S")
+
+start <- format("2023-08-01 00:00:00")
+end <- format("2023-08-21 00:00:00")
+
+# get data from SQLite file
+raw_ldf <- atl_get_data(
+  31001003001,
+  tracking_time_start=start,
+  tracking_time_end=end,
+  timezone = "UTC",
+  SQLiteDB = SQLiteDB,
+  use_connection = MyDBconnection
+)
+
+raw_ldf$speed <- atl_get_speed(raw_ldf)
+raw_ldf$angle <- atl_turning_angle(raw_ldf)
+
+thinned_data <- atl_thin_data(raw_ldf,
+  interval = 15,
+  id_columns = c("TAG"),
+  method = "aggregate"
+)
+
+smooth_df <- atl_median_smooth(raw_ldf)
+run_time_end <- Sys.time()
+
+database_time <- run_time_end - run_time_start
+
+# get data from SQLite file
+raw_ldf <- atl_get_data(
+  31001003002,
+  tracking_time_start=start,
+  tracking_time_end=end,
+  timezone = "UTC",
+  SQLiteDB = SQLiteDB,
+  use_connection = MyDBconnection
+)
+
+speed <- atl_get_speed(raw_ldf)
+angle <- atl_turning_angle(raw_ldf)
+
+thinned_data <- atl_thin_data(raw_ldf,
+  interval = 15,
+  id_columns = c("TAG"),
+  method = "aggregate"
+)
+
+smooth_df <- atl_median_smooth(raw_ldf)
+run_time_end <- Sys.time()
+
+database_time <- run_time_end - run_time_start
+# get data from SQLite file
+raw_ldf <- atl_get_data(
+  31001003016,
+  tracking_time_start=start,
+  tracking_time_end=end,
+  timezone = "UTC",
+  SQLiteDB = SQLiteDB,
+  use_connection = MyDBconnection
+)
+
+speed <- atl_get_speed(raw_ldf)
+angle <- atl_turning_angle(raw_ldf)
+
+thinned_data <- atl_thin_data(raw_ldf,
+  interval = 15,
+  id_columns = c("TAG"),
+  method = "aggregate"
+)
+
+smooth_df <- atl_median_smooth(raw_ldf)
+run_time_end <- Sys.time()
+
+database_time <- run_time_end - run_time_start
+
+print(database_time)
+
+```
+
+
