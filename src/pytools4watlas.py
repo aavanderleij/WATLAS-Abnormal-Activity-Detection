@@ -11,6 +11,7 @@ import math
 import timeit
 
 
+# TODO should really be a class
 def get_watlas_data(tags, tracking_time_start, tracking_time_end,
                     sqlite_file='sqlite://../data/SQLite/watlas-2023.sqlite'):
     """
@@ -85,6 +86,7 @@ def get_datetime(watlas_df):
     )
     return watlas_df
 
+
 def get_simple_distance(watlas_df):
     """
     Gets the Euclidean distance in meters between consecutive localization in a coordinate.
@@ -136,7 +138,6 @@ def get_speed(watlas_df):
 
     watlas_df = watlas_df.with_columns(speed.alias("speed"))
     return watlas_df
-
 
 
 def get_turn_angle(watlas_df):
@@ -277,7 +278,29 @@ def get_species(tag_df, watlas_df):
     print(watlas_df)
 
 
-if __name__ == '__main__':
+def filter_num_localisations(watlas_df, min_num_localisations=4):
+    """
+    If a tag appears less then this number of localisations it's removed from the dataframe.
+
+    Args:
+        watlas_df (pl.DataFrame): a polars dataframe containing WATLAS data
+        min_num_localisations (int): minimum number of localisations
+
+    Returns:
+        watlas_df: a polars dataframe containing WATLAS data
+
+    """
+    # count times tag is in df
+    tag_count = watlas_df.group_by("tag").len()
+    # get tags that are less than min_num_localisations
+    tags_to_remove = tag_count.filter(pl.col("len") < min_num_localisations).select("tag")
+    # filter tags
+    watlas_df = watlas_df.filter(~pl.col("tag").is_in(tags_to_remove))
+
+    return watlas_df
+
+
+def main():
     # time process
     start = timeit.default_timer()
     # data = get_watlas_data([3001],
@@ -292,19 +315,23 @@ if __name__ == '__main__':
     tag_df = get_tag_data("../data/watlas_data/tags_watlas_all.xlsx")
     get_species(tag_df, data)
     print("watlas data found: ")
-    print(data)
+    # print(data)
 
-    print()
     print("speed:")
-    print(get_speed(data))
-    print()
+    data = (get_speed(data))
     print("turn angle:")
-    print(get_turn_angle(data))
-    # print("aggrage data")
-    # argg_data = aggregate_dataframe(data)
-    # smooth_df = (smooth_data(data))
+
+    data = (get_turn_angle(data))
+    print("aggrage data")
+    data = aggregate_dataframe(data)
+    data = (smooth_data(data))
     # print(smooth_df)
     # print(smooth_df.select("X").head())
+    filter_num_localisations(data)
     stop = timeit.default_timer()
 
     print('Time: ', stop - start)
+
+
+if __name__ == '__main__':
+    sys.exit(main())
