@@ -59,7 +59,7 @@ def prepare_train_df(training_df):
     column_names = ["speed", "distance", "turn_angle", "alert", "large_disturb", "small_disturb"]
 
     # get species
-    tag_df = pytools4watlas.get_tag_data("../data/watlas_data/tags_watlas_all.xlsx")
+    tag_df = pytools4watlas.get_tag_data("data/watlas_data/tags_watlas_all.xlsx")
     training_df = pytools4watlas.get_species(tag_df, training_df)
 
     # get info of surrounding birds
@@ -102,18 +102,19 @@ def prepare_train_df(training_df):
 
     # print(training_df.columns)
     # drop exact coords
-    # training_df = training_df.drop("X", "Y")
+    training_df = training_df.drop("X", "Y")
     # # sort by time
-    # training_df = training_df.sort(by="time_agg")
-    # add last 4 time
+    training_df = training_df.sort(by="time_agg")
+    # set NaN and NULLs to 0
+    training_df = training_df.fill_nan(0).fill_null(0)
 
     return training_df
 
 
 def main():
-    training_df = get_train_df("../data/watlas_data/train_data_frame.csv")
+    training_df = get_train_df("data/training_data/train_data_frame.csv")
     preped_data = (prepare_train_df(training_df))
-    preped_data.write_csv("test_data.csv", separator=",")
+    preped_data.write_csv("data/training_data/processed_train_data.csv", separator=",")
     print(preped_data.head())
     print(preped_data.columns)
 
