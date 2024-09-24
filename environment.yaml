@@ -1,8 +1,10 @@
 name: watlas_disturbance_model
 channels:
   - conda-forge
+  - nvidia
 dependencies:
   - python>=3.11
+  - numpy
   - fastexcel
   - connectorx
   - pyarrow

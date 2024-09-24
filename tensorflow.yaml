@@ -1,0 +1,9 @@
+name: tensorflow
+channels:
+  - conda-forge
+  - nvidia
+dependencies:
+  - python
+  - numpy=1.16.4
+  - pandas
+  - tensorflow
