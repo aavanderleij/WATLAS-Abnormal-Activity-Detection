@@ -17,8 +17,8 @@ def calculate_simple_dist(x1, y1, x2, y2):
     distance = ((x1 - x2) ** 2 +
                 (y1 - y2) ** 2) ** 0.5  # multiply by power of 0.5 to get square root, to get euclidian distance
 
-def get_group_distance(df):
 
+def get_group_distance(df):
     avg_distances = []
     std_distances = []
 
@@ -51,7 +51,6 @@ def get_group_distance(df):
         pl.Series("std_dist", std_distances))
 
     return df
-
 
 
 def prepare_train_df(training_df):
