@@ -91,8 +91,9 @@ class WatlasDataframe:
             sys.exit(1)
 
         # add short tag number column
-        self.watlas_df = self.watlas_df.with_columns(
-            pl.col("TAG").cast(pl.String).str.slice(-4).cast(pl.Int64).alias("tag"))
+        self.watlas_df = self.watlas_df.with_columns([
+            pl.col("TAG"),
+            pl.col("TAG").cast(pl.String).str.slice(-4).cast(pl.Int64).alias("tag")])
 
         # get readable time
         self.get_datetime()
@@ -134,8 +135,15 @@ class WatlasDataframe:
             [
                 # aggregate columns X, Y and NBS by getting the mean of those values per interval
                 # drop COVXY, covariance loses meaning if an average is taken.
-                # TIME is now the average unix time
-                pl.col("*").exclude("VARX", "VARY", "COVXY").mean(),
+                pl.col("*").exclude("VARX", "VARY", "COVXY", "TIME", "tag").exclude(pl.Utf8).mean(),
+
+                # keep first value of string columns
+                pl.col(pl.Utf8).first(),
+                # keep first value of TIME
+                pl.col("TIME").first(),
+                # keep "tag" as int
+                pl.col("tag").first(),
+
                 # the variance of an average is the sum of variances / sample size square
                 (pl.col("VARX").sum() / (pl.col("VARX").count() ** 2)).alias("VARX"),
                 (pl.col("VARY").sum() / (pl.col("VARY").count() ** 2)).alias("VARY"),
@@ -186,6 +194,7 @@ class WatlasDataframe:
             # match tag id's to get species
             self.watlas_df = self.watlas_df.join(self.tags_df.select(["tag", "species"]), on="tag", how="left")
 
+
 def smooth_data(watlas_df, moving_window=5):
     """
     Applies a median smooth defined by a rolling window to the X and Y
@@ -214,6 +223,7 @@ def smooth_data(watlas_df, moving_window=5):
     )
     return watlas_df
 
+
 def get_simple_travel_distance(watlas_df):
     """
     Gets the Euclidean distance in meters between consecutive localization in a coordinate.
@@ -234,6 +244,7 @@ def get_simple_travel_distance(watlas_df):
 
     return watlas_df
 
+
 def get_speed(watlas_df):
     """
     Calculate speed in meters per second for a watlas dataframe.
@@ -253,6 +264,7 @@ def get_speed(watlas_df):
     watlas_df = watlas_df.with_columns(speed.alias("speed"))
 
     return watlas_df
+
 
 def get_turn_angle(watlas_df):
     """
@@ -309,27 +321,38 @@ def main():
                                      tracking_time_start="2023-08-01 00:00:00",
                                      tracking_time_end="2023-08-21 00:00:00", sqlite_path=sqlite_path)
 
-    print("watlas data found: ")
+    print("watlas data found ")
     print(watlas_df.get_watlas_dataframe())
+
+    watlas_df.filter_num_localisations()
+    print("filtered data ")
+    # print(watlas_df.get_watlas_dataframe())
+
+    watlas_df.aggregate_dataframe()
+    print("aggregated data ")
+    # print(watlas_df.get_watlas_dataframe())
+
     watlas_df.get_tag_data("data/watlas_data/tags_watlas_all.xlsx")
 
     print("species")
     watlas_df.get_species()
-    print(watlas_df.get_watlas_dataframe())
+    # print(watlas_df.get_watlas_dataframe())
 
-    print("speed:")
-    watlas_df.get_speed()
-    print(watlas_df.get_watlas_dataframe())
+    watlas_df = watlas_df.get_watlas_dataframe()
 
-    print("turn angle:")
-    watlas_df.get_turn_angle()
-    print(watlas_df.get_watlas_dataframe())
+    df_list = []
+    for tag, wat_df in watlas_df.group_by("tag"):
+        wat_df = smooth_data(wat_df)
+        wat_df = get_speed(wat_df)
+        wat_df = get_turn_angle(wat_df)
 
-    print("aggrage data")
-    watlas_df.aggregate_dataframe()
-    print(watlas_df.get_watlas_dataframe())
+        df_list.append(wat_df)
 
-    watlas_df.filter_num_localisations()
+    watlas_df = pl.concat(df_list)
+    watlas_df.write_csv("watlas_all.csv")
+    print(watlas_df)
+    print(watlas_df.columns)
+
     stop = timeit.default_timer()
     print('Time: ', stop - start)
 
