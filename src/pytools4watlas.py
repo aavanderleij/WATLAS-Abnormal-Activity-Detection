@@ -121,84 +121,6 @@ class WatlasDataframe:
             pl.from_epoch(pl.col("TIME"), time_unit="ms").alias("time")
         )
 
-    def get_simple_distance(self):
-        """
-        Gets the Euclidean distance in meters between consecutive localization in a coordinate.
-        Add claculated distance to each as column "distance"
-        """
-
-        dist_series = (
-                (
-                    # get the difference between the current coordinate and the next coordinate in the X and Y columns
-                    # multiply by the power of 2
-                        (self.watlas_df["X"] - self.watlas_df["X"].shift(1)) ** 2 +
-                        (self.watlas_df["Y"] - self.watlas_df["Y"].shift(1)) ** 2
-                ) ** 0.5  # multiply by power of 0.5 to get square root, to get euclidian distance
-        )
-
-        # add dist to dataframe
-        self.watlas_df = self.watlas_df.with_columns(dist_series.alias("distance"))
-
-    def get_speed(self):
-        """
-        Calculate speed in meters per second for a watlas dataframe.
-        Add claculated speed as column "speed"
-        """
-        # check if distance is already calculated
-        if "distance" not in self.watlas_df.columns:
-            self.get_simple_distance()
-
-        # get distance
-        distance = self.watlas_df["distance"]
-        # get the time interval between rows in the "TIME" column
-        time = (self.watlas_df["TIME"] - self.watlas_df["TIME"].shift(1)) / 1000
-        # calculate speed
-        speed = distance / time
-
-        self.watlas_df = self.watlas_df.with_columns(speed.alias("speed"))
-
-    def get_turn_angle(self):
-        """
-        Calculate turn angle in degrees for a watlas dataframe.
-        Using the law of cosines this function returns the turning angle in degrees based on the x an y coordinates.
-        Negative  degrees indicate left turns (counter-clockwise)
-
-        Add claculated turn angle as column "turn_angle"
-        """
-        # Create lagged versions of X
-        x1 = self.watlas_df["X"][:-2]
-        x2 = self.watlas_df["X"][1:-1]
-        x3 = self.watlas_df["X"][2:]
-
-        # Create lagged version of Y
-        y1 = self.watlas_df["Y"][:-2]
-        y2 = self.watlas_df["Y"][1:-1]
-        y3 = self.watlas_df["Y"][2:]
-
-        dist_x1_x2 = np.sqrt(((x2 - x1) ** 2) + ((y2 - y1) ** 2))
-        dist_x2_x3 = np.sqrt(((x3 - x2) ** 2) + ((y3 - y2) ** 2))
-        dist_x3_x1 = np.sqrt(((x3 - x1) ** 2) + ((y3 - y1) ** 2))
-
-        angle = np.acos((
-                                (dist_x1_x2 ** 2) +
-                                (dist_x2_x3 ** 2) -
-                                (dist_x3_x1 ** 2)
-                        ) /
-                        (2 * dist_x1_x2 * dist_x2_x3)
-                        )
-
-        # convert to degrees
-        angle = angle * 180 / math.pi
-
-        # subtract from 180 to get the external angle
-        angle = 180 - angle
-
-        # insert np at the end and beginning to keep length of array the same as the dataframe
-        angle = np.insert(angle, 0, np.nan)
-        angle = np.append(angle, np.nan)
-
-        self.watlas_df = self.watlas_df.with_columns(pl.Series(angle).alias("turn_angle"))
-
     def aggregate_dataframe(self, interval="15s"):
         """
         Aggregate a polars dataframe containing WATLAS data to the time specified interval.
@@ -218,32 +140,6 @@ class WatlasDataframe:
                 (pl.col("VARX").sum() / (pl.col("VARX").count() ** 2)).alias("VARX"),
                 (pl.col("VARY").sum() / (pl.col("VARY").count() ** 2)).alias("VARY"),
             ]
-        )
-
-    def smooth_data(self, moving_window=5):
-        """
-        Applies a median smooth defined by a rolling window to the X and Y
-
-        Args:
-            moving_window (int): the window size:
-        """
-        # TODO there is a shift in the smoothing compard to the r function runmed form the stats librabry.
-        self.watlas_df = self.watlas_df.with_columns(
-            pl.col("X").alias("X_raw"),  # Keep original values
-            pl.col("Y").alias("Y_raw"),  # Keep original values
-            # Apply the forward and reverse rolling median on X
-            pl.col("X")
-            .reverse()
-            .rolling_median(window_size=moving_window, min_periods=1)
-            .reverse()
-            .rolling_median(window_size=moving_window, min_periods=1)
-            .alias("X"),
-            # Apply the forward and reverse rolling median on Y
-            pl.col("Y")
-            .reverse()
-            .rolling_median(window_size=moving_window, min_periods=1)
-            .reverse()
-            .rolling_median(window_size=moving_window, min_periods=1)
         )
 
     def filter_num_localisations(self, min_num_localisations=4):
@@ -290,6 +186,118 @@ class WatlasDataframe:
             # match tag id's to get species
             self.watlas_df = self.watlas_df.join(self.tags_df.select(["tag", "species"]), on="tag", how="left")
 
+def smooth_data(watlas_df, moving_window=5):
+    """
+    Applies a median smooth defined by a rolling window to the X and Y
+
+    Args:
+        watlas_df (pl.Datafame):
+        moving_window (int): the window size:
+    """
+    # TODO there is a shift in the smoothing compard to the r function runmed form the stats librabry.
+    watlas_df = watlas_df.with_columns(
+        pl.col("X").alias("X_raw"),  # Keep original values
+        pl.col("Y").alias("Y_raw"),  # Keep original values
+        # Apply the forward and reverse rolling median on X
+        pl.col("X")
+        .reverse()
+        .rolling_median(window_size=moving_window, min_periods=1)
+        .reverse()
+        .rolling_median(window_size=moving_window, min_periods=1)
+        .alias("X"),
+        # Apply the forward and reverse rolling median on Y
+        pl.col("Y")
+        .reverse()
+        .rolling_median(window_size=moving_window, min_periods=1)
+        .reverse()
+        .rolling_median(window_size=moving_window, min_periods=1)
+    )
+    return watlas_df
+
+def get_simple_travel_distance(watlas_df):
+    """
+    Gets the Euclidean distance in meters between consecutive localization in a coordinate.
+    Add claculated distance to each as column "distance"
+    """
+
+    dist_series = (
+            (
+                # get the difference between the current coordinate and the next coordinate in the X and Y columns
+                # multiply by the power of 2
+                    (watlas_df["X"] - watlas_df["X"].shift(1)) ** 2 +
+                    (watlas_df["Y"] - watlas_df["Y"].shift(1)) ** 2
+            ) ** 0.5  # multiply by power of 0.5 to get square root, to get euclidian distance
+    )
+
+    # add dist to dataframe
+    watlas_df = watlas_df.with_columns(dist_series.alias("distance"))
+
+    return watlas_df
+
+def get_speed(watlas_df):
+    """
+    Calculate speed in meters per second for a watlas dataframe.
+    Add claculated speed as column "speed"
+    """
+    # check if distance is already calculated
+    if "distance" not in watlas_df.columns:
+        watlas_df = get_simple_travel_distance(watlas_df)
+
+    # get distance
+    distance = watlas_df["distance"]
+    # get the time interval between rows in the "TIME" column
+    time = (watlas_df["TIME"] - watlas_df["TIME"].shift(1)) / 1000
+    # calculate speed
+    speed = distance / time
+
+    watlas_df = watlas_df.with_columns(speed.alias("speed"))
+
+    return watlas_df
+
+def get_turn_angle(watlas_df):
+    """
+    Calculate turn angle in degrees for a watlas dataframe.
+    Using the law of cosines this function returns the turning angle in degrees based on the x an y coordinates.
+    Negative  degrees indicate left turns (counter-clockwise)
+
+    Add claculated turn angle as column "turn_angle"
+    """
+    # Create lagged versions of X
+    x1 = watlas_df["X"][:-2]
+    x2 = watlas_df["X"][1:-1]
+    x3 = watlas_df["X"][2:]
+
+    # Create lagged version of Y
+    y1 = watlas_df["Y"][:-2]
+    y2 = watlas_df["Y"][1:-1]
+    y3 = watlas_df["Y"][2:]
+
+    dist_x1_x2 = np.sqrt(((x2 - x1) ** 2) + ((y2 - y1) ** 2))
+    dist_x2_x3 = np.sqrt(((x3 - x2) ** 2) + ((y3 - y2) ** 2))
+    dist_x3_x1 = np.sqrt(((x3 - x1) ** 2) + ((y3 - y1) ** 2))
+
+    angle = np.acos((
+                            (dist_x1_x2 ** 2) +
+                            (dist_x2_x3 ** 2) -
+                            (dist_x3_x1 ** 2)
+                    ) /
+                    (2 * dist_x1_x2 * dist_x2_x3)
+                    )
+
+    # convert to degrees
+    angle = angle * 180 / math.pi
+
+    # subtract from 180 to get the external angle
+    angle = 180 - angle
+
+    # insert np at the end and beginning to keep length of array the same as the dataframe
+    angle = np.insert(angle, 0, np.nan)
+    angle = np.append(angle, np.nan)
+
+    watlas_df = watlas_df.with_columns(pl.Series(angle).alias("turn_angle"))
+
+    return watlas_df
+
 
 def main():
     # time process
@@ -321,10 +329,8 @@ def main():
     watlas_df.aggregate_dataframe()
     print(watlas_df.get_watlas_dataframe())
 
-
     watlas_df.filter_num_localisations()
     stop = timeit.default_timer()
-
     print('Time: ', stop - start)
 
 
