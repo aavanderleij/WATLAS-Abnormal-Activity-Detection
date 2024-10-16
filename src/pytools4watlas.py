@@ -179,6 +179,19 @@ class WatlasDataframe:
         # TODO check if file exist and contains right columns
         self.tags_df = pl.read_excel(tag_csv_path)
 
+    def get_all_tags(self):
+        """
+        Get all tag numbers from tag_df
+        Returns:
+            all_tags (pl.Series): a list of all tag numbers.
+
+        """
+
+        all_tags = self.tags_df.get_column("tag")
+
+        return all_tags
+
+
     def get_species(self):
         """
         match tag ids to id's in tag_df to get the species of every instace in the dataframe
@@ -194,6 +207,46 @@ class WatlasDataframe:
             # match tag id's to get species
             self.watlas_df = self.watlas_df.join(self.tags_df.select(["tag", "species"]), on="tag", how="left")
 
+    def process_for_prediction(self, start_time, end_time):
+        """
+        get WATLAS data and process it for prediction.
+
+        """
+        print("in process_for_prediction")
+        sqlite_path = "data/SQLite/watlas-2023.sqlite"
+        self.get_tag_data("data/watlas_data/tags_watlas_all.xlsx")
+
+        all_tags = self.get_all_tags()
+        self.get_watlas_data_sqlite(all_tags,
+                                         tracking_time_start=start_time,
+                                         tracking_time_end=end_time, sqlite_path=sqlite_path)
+
+        print("watlas data found ")
+        print(self.get_watlas_dataframe())
+
+        self.filter_num_localisations()
+        print("filtered data ")
+
+        self.aggregate_dataframe()
+        print("aggregated data ")
+
+        print("species")
+        self.get_species()
+
+        df_list = []
+        for tag, wat_df in self.watlas_df.group_by("tag"):
+            wat_df = smooth_data(wat_df)
+            wat_df = get_speed(wat_df)
+            wat_df = get_turn_angle(wat_df)
+
+            df_list.append(wat_df)
+
+        watlas_df = pl.concat(df_list)
+        watlas_df.write_csv("watlas_all.csv")
+        print("all done!")
+
+
+
 
 def smooth_data(watlas_df, moving_window=5):
     """
@@ -203,7 +256,7 @@ def smooth_data(watlas_df, moving_window=5):
         watlas_df (pl.Datafame):
         moving_window (int): the window size:
     """
-    # TODO there is a shift in the smoothing compard to the r function runmed form the stats librabry.
+    # TODO there is a shift in the smoothing compared to the r function runmed from the stats library.
     watlas_df = watlas_df.with_columns(
         pl.col("X").alias("X_raw"),  # Keep original values
         pl.col("Y").alias("Y_raw"),  # Keep original values
@@ -317,41 +370,43 @@ def main():
 
     sqlite_path = "data/SQLite/watlas-2023.sqlite"
     watlas_df = WatlasDataframe()
-    watlas_df.get_watlas_data_sqlite([3001, 3002, 3016],
-                                     tracking_time_start="2023-08-01 00:00:00",
-                                     tracking_time_end="2023-08-21 00:00:00", sqlite_path=sqlite_path)
 
-    print("watlas data found ")
-    print(watlas_df.get_watlas_dataframe())
-
-    watlas_df.filter_num_localisations()
-    print("filtered data ")
+    watlas_df.process_for_prediction(start_time="2023-08-01 00:00:00", end_time="2023-08-21 00:00:00")
+    # watlas_df.get_watlas_data_sqlite([3001, 3002, 3016],
+    #                                  tracking_time_start="2023-08-01 00:00:00",
+    #                                  tracking_time_end="2023-08-21 00:00:00", sqlite_path=sqlite_path)
+    #
+    # print("watlas data found ")
     # print(watlas_df.get_watlas_dataframe())
-
-    watlas_df.aggregate_dataframe()
-    print("aggregated data ")
-    # print(watlas_df.get_watlas_dataframe())
-
-    watlas_df.get_tag_data("data/watlas_data/tags_watlas_all.xlsx")
-
-    print("species")
-    watlas_df.get_species()
-    # print(watlas_df.get_watlas_dataframe())
-
-    watlas_df = watlas_df.get_watlas_dataframe()
-
-    df_list = []
-    for tag, wat_df in watlas_df.group_by("tag"):
-        wat_df = smooth_data(wat_df)
-        wat_df = get_speed(wat_df)
-        wat_df = get_turn_angle(wat_df)
-
-        df_list.append(wat_df)
-
-    watlas_df = pl.concat(df_list)
-    watlas_df.write_csv("watlas_all.csv")
-    print(watlas_df)
-    print(watlas_df.columns)
+    #
+    # watlas_df.filter_num_localisations()
+    # print("filtered data ")
+    # # print(watlas_df.get_watlas_dataframe())
+    #
+    # watlas_df.aggregate_dataframe()
+    # print("aggregated data ")
+    # # print(watlas_df.get_watlas_dataframe())
+    #
+    # watlas_df.get_tag_data("data/watlas_data/tags_watlas_all.xlsx")
+    #
+    # print("species")
+    # watlas_df.get_species()
+    # # print(watlas_df.get_watlas_dataframe())
+    #
+    # watlas_df = watlas_df.get_watlas_dataframe()
+    #
+    # df_list = []
+    # for tag, wat_df in watlas_df.group_by("tag"):
+    #     wat_df = smooth_data(wat_df)
+    #     wat_df = get_speed(wat_df)
+    #     wat_df = get_turn_angle(wat_df)
+    #
+    #     df_list.append(wat_df)
+    #
+    # watlas_df = pl.concat(df_list)
+    # watlas_df.write_csv("watlas_all.csv")
+    # print(watlas_df)
+    # print(watlas_df.columns)
 
     stop = timeit.default_timer()
     print('Time: ', stop - start)
