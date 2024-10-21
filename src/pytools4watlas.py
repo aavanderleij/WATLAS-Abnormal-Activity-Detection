@@ -209,6 +209,35 @@ class WatlasDataframe:
             # match tag id's to get species
             self.watlas_df = self.watlas_df.join(self.tags_df.select(["tag", "species"]), on="tag", how="left")
 
+    def add_tide_data(self, path_tide_data):
+        """
+        Add water level to watlas dataframe
+        Args:
+            path_tide_data (str): the path to the tide data file:
+
+        Returns:
+
+        """
+        # load in tidal data csv
+        tide_df = pl.read_csv(path_tide_data, dtypes={"waterlevel": pl.Float64,
+                                                      "dateTime": pl.Datetime(time_unit="ms")})
+        # drop unnecessary columns
+        tide_df = tide_df.drop(["time", "date"])
+        # rename column to be the same as watlas_df
+        tide_df = tide_df.rename({"dateTime": "time"})
+
+        # check if sorted
+        if not self.watlas_df["time"].is_sorted():
+            # if not sorted, sort
+            self.watlas_df = self.watlas_df.sort(by="time")
+        # check if sorted
+        if not tide_df["time"].is_sorted():
+            # if not sorted, sort
+            tide_df = tide_df.sort(by="time")
+
+        # join tidal dataframe with watlas_df on time, this adds the closest measured water level to watlas_df
+        self.watlas_df = self.watlas_df.join_asof(tide_df, on="time", strategy="nearest")
+
     def process_for_prediction(self, start_time, end_time, sqlite_path, tag_file):
         """
         get WATLAS data and process it for prediction.
@@ -285,15 +314,16 @@ class WatlasDataframe:
             df_list.append(wat_df)
 
         # concat dataframes to single dataframe
-        watlas_df = pl.concat(df_list)
+        self.watlas_df = pl.concat(df_list)
 
         # # sort by time
-        watlas_df = watlas_df.sort(by="time")
+        self.watlas_df = self.watlas_df.sort(by="time")
+        self.add_tide_data("data/watlas_data/allYears-gemeten_waterhoogte-west_terschelling-clean-UTC.csv")
         # set NaN and NULLs to 0
-        watlas_df = watlas_df.fill_nan(0).fill_null(0)
+        self.watlas_df = self.watlas_df.fill_nan(0).fill_null(0)
 
         # write to csv
-        watlas_df.write_csv("watlas_all.csv")
+        self.watlas_df.write_csv("watlas_all.csv")
         print("processed data for prediction!")
         print("results saved in:")
         print(os.path.abspath("watlas_all.csv"))
@@ -516,14 +546,12 @@ def get_group_metrics(watlas_df, group_area, species_list):
         # print(f"Group for row {i}: {group}")
         # print(f"Number of species for row {i}: {n_species[i]}")
 
-
     watlas_df = watlas_df.with_columns(
         pl.Series("mean_dist", mean_distances),
         pl.Series("median_dist", median_distances),
         pl.Series("std_dist", std_distances),
         pl.Series("group_size", group_size),
         pl.Series("n_species", n_species))
-
 
     # Convert each list in species_dict into a column
     for species_name, in_group_list in species_dict.items():
