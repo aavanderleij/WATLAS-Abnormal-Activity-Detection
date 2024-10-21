@@ -28,6 +28,8 @@ class WatlasDataframe:
         # set instance variable
         self.tags_df = tags_df
         self.watlas_df = watlas_df
+        self.species_list = ["islandica", "oystercatcher", "spoonbill", "bar-tailed godwit", "redshank", "sanderling",
+                             "dunlin", "turnstone", "curlew"]
 
     # TODO add remote database access
     def get_watlas_data_sqlite(self, tags, tracking_time_start, tracking_time_end, sqlite_path):
@@ -207,19 +209,20 @@ class WatlasDataframe:
             # match tag id's to get species
             self.watlas_df = self.watlas_df.join(self.tags_df.select(["tag", "species"]), on="tag", how="left")
 
-    def process_for_prediction(self, start_time, end_time):
+    def process_for_prediction(self, start_time, end_time, sqlite_path, tag_file):
         """
         get WATLAS data and process it for prediction.
 
         Args:
             start_time (str): start time for data fetching
             end_time (str): end time for data fetching
+            tag_file (str): tag csv file path:
+            sqlite_path (str): sqlite file path:
         """
         print("in process_for_prediction")
 
         column_names = ["speed", "distance", "turn_angle"]
-        sqlite_path = "data/SQLite/watlas-2023.sqlite"
-        self.get_tag_data("data/watlas_data/tags_watlas_all.xlsx")
+        self.get_tag_data(tag_file)
 
         # get data from sqlite file
         all_tags = self.get_all_tags()
@@ -236,20 +239,16 @@ class WatlasDataframe:
         # add species column
         self.get_species()
 
+        # remove species not in species list
+        self.watlas_df = self.watlas_df.filter(pl.col("species").is_in(self.species_list))
+
         # empty dataframe list
         df_list = []
 
-
-
         # group data frame by time stamp
         for time, wat_df in self.watlas_df.group_by("time"):
-            # add group size
-            wat_df = wat_df.with_columns(pl.len().alias("group_size_per_timestamp"))
-            # add number of unique species
-            n_unique_species = wat_df["species"].n_unique()
-            wat_df = wat_df.with_columns(pl.lit(n_unique_species).alias("n_unique_species"))
             # get distance
-            wat_df = get_group_distance(wat_df, 500)
+            wat_df = get_group_metrics(wat_df, 500, self.species_list)
 
             # cast columns to floats
             wat_df = wat_df.with_columns([
@@ -287,6 +286,12 @@ class WatlasDataframe:
 
         # concat dataframes to single dataframe
         watlas_df = pl.concat(df_list)
+
+        # # sort by time
+        watlas_df = watlas_df.sort(by="time")
+        # set NaN and NULLs to 0
+        watlas_df = watlas_df.fill_nan(0).fill_null(0)
+
         # write to csv
         watlas_df.write_csv("watlas_all.csv")
         print("processed data for prediction!")
@@ -410,13 +415,32 @@ def get_turn_angle(watlas_df):
     return watlas_df
 
 
-def get_group_distance(watlas_df, group_area):
+def count_species(watlas_df, species_list):
+    """
+    Counts the number of species in a dataframe.
+    Args:
+        watlas_df:
+
+    Returns:
+
+    """
+    species_count_dict = {}
+    # Loop through each unique species and calculate the count
+    for species in species_list:
+        species_count = watlas_df.filter(pl.col("species") == species).height
+        species_count_dict[f"{species}_in_group"] = [species_count]
+
+    # Create a new DataFrame with the species counts
+    return species_count_dict
+
+
+def get_group_metrics(watlas_df, group_area, species_list):
     """
     Calculate distance between individuals. Return the mean, median, std deviation of all individuals within
     group_area
 
     Args:
-        watlas_df (pl.dataframe): training dataframe
+        watlas_df (pl.dataframe): training dataframe of individuals that are in the same timeframe
         group_area (int): Maximum distance between individuals to be considered part of same group in meters
 
     Returns:
@@ -427,30 +451,55 @@ def get_group_distance(watlas_df, group_area):
     mean_distances = []
     median_distances = []
     std_distances = []
+    group_size = []
+    n_species = []
+
+    # set empty dict
+    species_dict = {}
 
     # get x and y columns from dataframe
     x_coords = watlas_df["X"]
     y_coords = watlas_df["Y"]
 
+    for animal in species_list:
+        species_dict[f"{animal}_in_group"] = []
+
+    # per row in watlas_df
     for i in range(watlas_df.shape[0]):
+        # TODO this is not done! Its a mess.... very slow and species is idk....
         # get current row coords
         x1, y1 = watlas_df[i, "X"], watlas_df[i, "Y"]
 
         # get distances of current row
         distances = ((x_coords - x1) ** 2 + (y_coords - y1) ** 2).sqrt()
 
-        # remove dist to self
-        distances = distances.filter(distances != 0)
-        # remove dist smaller than 500
-        distances = distances.filter(distances <= group_area)
+        # get boolian mask for when distance is not 0 (self) or distance is smaller than group_area
+        mask = (distances != 0) & (distances <= group_area)
+
+        # filter distances
+        distances = distances.filter(mask)
+
+        # filter self and member out of group
+        group = watlas_df.filter(mask)
+        # get group size and species
+        group_size.append(group.height)
+        group_species = group["species"].to_list()
+        n_species.append(len(set(group_species)))
+
+        for animal in species_list:
+            if animal in group_species:
+                species_dict[f"{animal}_in_group"].append(1)
+            else:
+                species_dict[f"{animal}_in_group"].append(0)
 
         # if there are more one member of group
-        if distances.shape[0] != 1:
+        if distances.shape[0] != 0:
 
             # get mean, median and standard deviation
             mean = distances.mean()
             median_dist = distances.median()
             std_dist = distances.std()
+
         else:
             # if there are no members of group, set all to 0
             mean = 0.0
@@ -461,13 +510,29 @@ def get_group_distance(watlas_df, group_area):
         median_distances.append(median_dist)
         std_distances.append(std_dist)
 
-    # save values as columns
+        # print(f"Distances for row {i}: {distances}")
+        # print(f"mean distance: {mean}")
+        # print(f"Mask for row {i}: {mask}")
+        # print(f"Group for row {i}: {group}")
+        # print(f"Number of species for row {i}: {n_species[i]}")
+
+
     watlas_df = watlas_df.with_columns(
         pl.Series("mean_dist", mean_distances),
         pl.Series("median_dist", median_distances),
-        pl.Series("std_dist", std_distances))
+        pl.Series("std_dist", std_distances),
+        pl.Series("group_size", group_size),
+        pl.Series("n_species", n_species))
+
+
+    # Convert each list in species_dict into a column
+    for species_name, in_group_list in species_dict.items():
+        watlas_df = watlas_df.with_columns(
+            pl.Series(species_name, in_group_list)
+        )
 
     return watlas_df
+
 
 def main():
     # time process
@@ -476,7 +541,9 @@ def main():
     sqlite_path = "data/SQLite/watlas-2023.sqlite"
     watlas_df = WatlasDataframe()
 
-    watlas_df.process_for_prediction(start_time="2023-08-01 00:00:00", end_time="2023-08-21 00:00:00")
+    watlas_df.process_for_prediction(start_time="2023-08-01 00:00:00", end_time="2023-08-21 00:00:00",
+                                     sqlite_path="data/SQLite/watlas-2023.sqlite",
+                                     tag_file="data/watlas_data/tags_watlas_all.xlsx")
     # watlas_df.get_watlas_data_sqlite([3001, 3002, 3016],
     #                                  tracking_time_start="2023-08-01 00:00:00",
     #                                  tracking_time_end="2023-08-21 00:00:00", sqlite_path=sqlite_path)
