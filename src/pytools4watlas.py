@@ -214,9 +214,6 @@ class WatlasDataframe:
         Add water level to watlas dataframe
         Args:
             path_tide_data (str): the path to the tide data file:
-
-        Returns:
-
         """
         # load in tidal data csv
         tide_df = pl.read_csv(path_tide_data, dtypes={"waterlevel": pl.Float64,
@@ -268,7 +265,7 @@ class WatlasDataframe:
         # add species column
         self.get_species()
 
-        # remove species not in species list
+        # remove species not in species list (thing like pond bats, test tags, etc)
         self.watlas_df = self.watlas_df.filter(pl.col("species").is_in(self.species_list))
 
         # empty dataframe list
@@ -390,12 +387,15 @@ def get_speed(watlas_df):
 
     # get distance
     distance = watlas_df["distance"]
-    # get the time interval between rows in the "TIME" column
+    # get the time interval in seconds between rows in the "TIME" column
     time = (watlas_df["TIME"] - watlas_df["TIME"].shift(1)) / 1000
     # calculate speed
     speed = distance / time
 
-    watlas_df = watlas_df.with_columns(speed.alias("speed"))
+    # add speed_in and speed_out to dataframe
+    watlas_df = watlas_df.with_columns([
+        speed.alias("speed_in"),
+        speed.shift(-1).alias("speed_out")])
 
     return watlas_df
 
@@ -449,6 +449,7 @@ def count_species(watlas_df, species_list):
     """
     Counts the number of species in a dataframe.
     Args:
+        species_list: list of all expected species.
         watlas_df:
 
     Returns:
