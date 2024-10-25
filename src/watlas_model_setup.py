@@ -7,8 +7,19 @@ import numpy as np
 import pandas as pd
 
 import tensorflow as tf
+from tensorflow import keras
 from tensorflow.keras import layers
+import seaborn as sns
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 
+import sklearn
+from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
+mpl.rcParams['figure.figsize'] = (12, 10)
+colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 class ModelSetup:
 
@@ -17,17 +28,34 @@ class ModelSetup:
         # TODO add time of day/time to high tide when more training data is available
         # TODO add tidal data
         # columns by type
-        self.columns_to_drop = ["df_id", "time_agg", "tag", "posID", "TAG", "large_disturb", "small_disturb", "time",
-                                "TIME", "large_disturb_1", "large_disturb_2", "large_disturb_3", "large_disturb_4",
-                                'small_disturb_1', 'small_disturb_2', 'small_disturb_3', 'small_disturb_4', "speed_out", 'alert_1', 'alert_2', 'alert_3', 'alert_4']
-        self.numerical_columns = ['NBS', 'speed_in', 'VARX', 'VARY', 'group_size_per_timestamp',
-                                  'n_unique_species', 'avg_dist', 'std_dist', 'distance', 'speed', 'turn_angle',
-                                  'speed_1', 'distance_1', 'turn_angle_1', 'speed_2', 'distance_2', 'turn_angle_2',
-                                  'speed_3', 'distance_3', 'turn_angle_3', 'speed_4', 'distance_4', 'turn_angle_4']
+        self.columns_to_drop = ['TAG', 'time', 'X', 'Y', 'TIME', 'tag', 'X_raw', 'Y_raw']
+        self.numerical_columns = ['NBS', 'VARX', 'VARY', 'group_size',
+                                  'n_species', 'mean_dist', 'median_dist', 'std_dist', 'distance', 'speed_in',
+                                  'speed_out', 'turn_angle', 'speed_in_1', 'speed_out_1', 'distance_1', 'turn_angle_1',
+                                  'speed_in_2', 'speed_out_2', 'distance_2', 'turn_angle_2', 'speed_in_3',
+                                  'speed_out_3', 'distance_3', 'turn_angle_3', 'speed_in_4', 'speed_out_4',
+                                  'distance_4',
+                                  'turn_angle_4', 'waterlevel']
         self.categorical_sting_columns = ["species"]
-        # self.categorical_bool_columns = ["alert", 'alert_1', 'alert_2', 'alert_3', 'alert_4']
+        self.categorical_bool_columns = ['islandica_in_group', 'oystercatcher_in_group', 'spoonbill_in_group',
+                                         'bar-tailed_godwit_in_group', 'redshank_in_group', 'sanderling_in_group',
+                                         'dunlin_in_group', 'turnstone_in_group', 'curlew_in_group']
 
-    def load_train_data(self, path_to_traindata="data/training_data/processed_train_data.csv"):
+        self.metrics = [
+            keras.metrics.BinaryCrossentropy(name='cross entropy'),
+            keras.metrics.MeanSquaredError(name='Brier score'),
+            keras.metrics.TruePositives(name='tp'),
+            keras.metrics.FalsePositives(name='fp'),
+            keras.metrics.TrueNegatives(name='tn'),
+            keras.metrics.FalseNegatives(name='fn'),
+            keras.metrics.BinaryAccuracy(name='accuracy'),
+            keras.metrics.Precision(name='precision'),
+            keras.metrics.Recall(name='recall'),
+            keras.metrics.AUC(name='auc'),
+            keras.metrics.AUC(name='prc', curve='PR'),
+        ]
+
+    def load_train_data(self, path_to_traindata="watlas_with_labels.csv"):
         """
         Read training data from csv file and load it into a pandas dataframe.
         Args:
@@ -45,8 +73,10 @@ class ModelSetup:
         train_data_df = train_data_df.drop(columns=self.columns_to_drop)
 
         # check for nans and inf
-        print(train_data_df.isna().sum())
-        print(train_data_df.isin([np.inf, -np.inf]).sum())
+        # print(train_data_df.isna().sum())
+        # print(train_data_df.isin([np.inf, -np.inf]).sum())
+
+        print(train_data_df.columns)
         return train_data_df
 
     def split_data(self, dataframe):
@@ -61,15 +91,38 @@ class ModelSetup:
             test (pandas dataframe): test data dataframe
 
         """
+        neg, pos = np.bincount(dataframe['Alert'])
+        total = neg + pos
+        print('Examples:\n    Total: {}\n    Positive: {} ({:.2f}% of total)\n'.format(
+            total, pos, 100 * pos / total))
+
+        weight_for_0 = (1 / neg) * (total / 2.0)
+        weight_for_1 = (1 / pos) * (total / 2.0)
+
+        class_weight = {0: weight_for_0, 1: weight_for_1}
+
+        print('Weight for class 0: {:.2f}'.format(weight_for_0))
+        print('Weight for class 1: {:.2f}'.format(weight_for_1))
+
         # split training data into training data set, validation data set and a test data set
-        train, val, test = np.split(dataframe.sample(frac=1), [int(0.8 * len(dataframe)), int(0.9 * len(dataframe))])
+        # TODO use scikit train test split to get random proportinal validation sets
+        train, test = train_test_split(dataframe, test_size=0.2)
+        train, val = train_test_split(train, test_size=0.2)
+
+        neg, pos = np.bincount(test['Alert'])
+        total = neg + pos
+        print('Examples test:\n    Total: {}\n    Positive: {} ({:.2f}% of total)\n'.format(
+            total, pos, 100 * pos / total))
+
+        print(fr"Amount of data {total} ")
+
         # print amount of samples in each set
         print(len(train), 'training examples')
         print(len(val), 'validation examples')
         print(len(test), 'test examples')
-        return train, val, test
+        return train, val, test, class_weight
 
-    def df_to_dataset(self, dataframe, shuffle=True, batch_size=32):
+    def df_to_dataset(self, dataframe, shuffle=False, batch_size=32):
         """
         converts dataframe to TensorFlow dataset
         boilerplate code from TensorFlow
@@ -84,7 +137,7 @@ class ModelSetup:
         # make a copy if the dataframe
         df = dataframe.copy()
         # separate labels
-        labels = df.pop("alert")
+        labels = df.pop("Alert")
         # make a dict with column name as key, value is numpy array and reshape the vector to an 1D array (n, 1)
         df = {key: value.to_numpy()[:, tf.newaxis] for key, value in dataframe.items()}
         # convert to dataset object
@@ -201,10 +254,10 @@ class ModelSetup:
             all_inputs[header] = categorical_col
             encoded_features.append(encoded_categorical_col)
 
-        # for header in self.categorical_bool_columns:
-        #     bool_col = tf.keras.Input(shape=(1,), name=header)
-        #     all_inputs[header] = bool_col
-        #     encoded_features.append(bool_col)
+        for header in self.categorical_bool_columns:
+            bool_col = tf.keras.Input(shape=(1,), name=header)
+            all_inputs[header] = bool_col
+            encoded_features.append(bool_col)
 
         return all_inputs, encoded_features
 
@@ -223,11 +276,15 @@ class ModelSetup:
         # Concat all features into single tensor
         all_features = tf.keras.layers.concatenate(encoded_features)
         # dense layer
+        x = tf.keras.layers.Dense(64, activation="relu")(all_features)
+        # dropout layer
+        x = tf.keras.layers.Dropout(0.5)(x)
+        # dense layer
         x = tf.keras.layers.Dense(32, activation="relu")(all_features)
         # dropout layer
         x = tf.keras.layers.Dropout(0.5)(x)
         # output layer
-        output = tf.keras.layers.Dense(1)(x)
+        output = tf.keras.layers.Dense(1, activation="sigmoid")(x)
 
         # create model
         model = tf.keras.Model(all_inputs, output)
@@ -235,10 +292,60 @@ class ModelSetup:
         # compile model
         model.compile(optimizer='adam',
                       loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
-                      metrics=["accuracy"],
+                      metrics=self.metrics,
                       run_eagerly=True)
 
+
         return model
+
+    def plot_metrics(self, history):
+        metrics = ['loss', 'prc', 'precision', 'recall']
+        for n, metric in enumerate(metrics):
+            name = metric.replace("_", " ").capitalize()
+            plt.subplot(2, 2, n + 1)
+            plt.plot(history.epoch, history.history[metric], color=colors[0], label='Train')
+            plt.plot(history.epoch, history.history['val_' + metric],
+                     color=colors[0], linestyle="--", label='Val')
+            plt.xlabel('Epoch')
+            plt.ylabel(name)
+            if metric == 'loss':
+                plt.ylim([0, plt.ylim()[1]])
+            elif metric == 'auc':
+                plt.ylim([0.8, 1])
+            else:
+                plt.ylim([0, 1])
+
+            plt.legend()
+        plt.show()
+    def train_model(self):
+        print("loading data...")
+        train_data = self.load_train_data()
+        print("split data...")
+        train, val, test, class_weight = self.split_data(train_data)
+        train_set = self.df_to_dataset(train, batch_size=25)
+        val_set = self.df_to_dataset(train, batch_size=25)
+        test_set = self.df_to_dataset(train, batch_size=25)
+        [(train_features, label_batch)] = train_set.take(1)
+
+        print('Every feature:', list(train_features.keys()))
+
+        print("encode features")
+        all_inputs, encoded_features = self.encode_features(train_set)
+        print("compile model")
+        ml_model = self.create_model(encoded_features, all_inputs)
+        # load weights
+        print("fit model")
+        history = ml_model.fit(train_set,
+                               epochs=2,
+                               validation_data=val_set,
+                               class_weight=class_weight)
+
+        self.plot_metrics(history)
+
+        print("get result")
+        result = ml_model.evaluate(test_set, return_dict=True)
+
+        return result
 
     def test_tensorflow_install(self):
         """"
@@ -248,31 +355,33 @@ class ModelSetup:
 
 
 def main():
-    model = ModelSetup()
-    train_data = model.load_train_data()
-    train, val, test = model.split_data(train_data)
-    train_set = model.df_to_dataset(train, batch_size=5)
-    val_set = model.df_to_dataset(train, batch_size=5)
-    test_set = model.df_to_dataset(train, batch_size=5)
-    [(train_features, label_batch)] = train_set.take(1)
+    ms = ModelSetup()
 
-    print('Every feature:', list(train_features.keys()))
-    print('A batch of speed:', train_features['speed_in'])
-    print('A batch of targets:', label_batch)
-
-    speed_in_col = train_features['speed_in']
-    layer = model.get_normalization_layer('speed_in', train_set)
-    print(layer(speed_in_col))
-
-    test_type_col = train_features['species']
-    test_type_layer = model.get_category_encoding_layer(name='species',
-                                                        dataset=train_set,
-                                                        dtype='string')
-    all_inputs, encoded_features = model.encode_features(train_set)
-    ml_model = model.create_model(encoded_features, all_inputs)
-    ml_model.fit(train_set, epochs=10, validation_data=val_set)
-    result = ml_model.evaluate(test_set, return_dict=True)
+    result = ms.train_model()
     print(result)
+
+    # ml_model.save("Wrong_model", save_format="tf")
+    loaded_model = tf.keras.models.load_model("Wrong_model")
+
+    train_data_df = pd.read_csv("watlas_all.csv")
+    # TODO keep an eye on parameters
+    # drop columns not used for training
+    train_data_df = train_data_df.drop(columns=ms.columns_to_drop)
+
+    df = {key: value.to_numpy()[:, tf.newaxis] for key, value in train_data_df.items()}
+
+    results = loaded_model.predict(df)
+
+    print(train_data_df.shape[0])
+    print(len(results))
+    print(results)
+    probabilities = tf.math.sigmoid(results)
+    print("probabilities:")
+    print(probabilities)
+    train_data_df['probability'] = results.numpy()
+    train_data_df['prediction'] = tf.cast(probabilities >= 0.5, tf.int32).numpy()
+
+    train_data_df.to_csv("predictions_example.csv")
 
 
 if __name__ == "__main__":
