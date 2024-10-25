@@ -13,8 +13,8 @@ import sys
 import math
 import timeit
 import warnings
-import numpy as np
 from datetime import datetime, timezone
+import numpy as np
 import polars as pl
 
 
@@ -28,7 +28,7 @@ class WatlasDataframe:
         # set instance variable
         self.tags_df = tags_df
         self.watlas_df = watlas_df
-        self.species_list = ["islandica", "oystercatcher", "spoonbill", "bar-tailed godwit", "redshank", "sanderling",
+        self.species_list = ["islandica", "oystercatcher", "spoonbill", "bar-tailed_godwit", "redshank", "sanderling",
                              "dunlin", "turnstone", "curlew"]
 
     # TODO add remote database access
@@ -181,6 +181,9 @@ class WatlasDataframe:
         """
         # TODO check if file exist and contains right columns
         self.tags_df = pl.read_excel(tag_csv_path)
+        # remove any spaces in species (bar-tailed godwit -> bar-tailed_godwit)
+        self.tags_df = self.tags_df.with_columns(pl.col("species").str.replace(" ", "_").alias("species"))
+        print(self.tags_df["species"].unique())
 
     def get_all_tags(self):
         """
@@ -207,6 +210,7 @@ class WatlasDataframe:
                           "this function!")
         else:
             # match tag id's to get species
+
             self.watlas_df = self.watlas_df.join(self.tags_df.select(["tag", "species"]), on="tag", how="left")
 
     def add_tide_data(self, path_tide_data):
@@ -247,7 +251,7 @@ class WatlasDataframe:
         """
         print("in process_for_prediction")
 
-        column_names = ["speed", "distance", "turn_angle"]
+        column_names = ["speed_in", "speed_out", "distance", "turn_angle"]
         self.get_tag_data(tag_file)
 
         # get data from sqlite file
@@ -334,7 +338,6 @@ def smooth_data(watlas_df, moving_window=5):
         watlas_df (pl.Datafame):
         moving_window (int): the window size:
     """
-    # TODO there is a shift in the smoothing compared to the r function runmed from the stats library.
     watlas_df = watlas_df.with_columns(
         pl.col("X").alias("X_raw"),  # Keep original values
         pl.col("Y").alias("Y_raw"),  # Keep original values
@@ -458,8 +461,11 @@ def count_species(watlas_df, species_list):
     species_count_dict = {}
     # Loop through each unique species and calculate the count
     for species in species_list:
+        species = species.strip().replace(" ", "_")
         species_count = watlas_df.filter(pl.col("species") == species).height
-        species_count_dict[f"{species}_in_group"] = [species_count]
+
+        species_count_dict[f"{species.replace(' ', '_')}_in_group"] = [species_count]
+        print(species_count_dict.keys())
 
     # Create a new DataFrame with the species counts
     return species_count_dict
@@ -467,7 +473,9 @@ def count_species(watlas_df, species_list):
 
 def get_group_metrics(watlas_df, group_area, species_list):
     """
-    Calculate distance between individuals. Return the mean, median, std deviation of all individuals within
+    Collect data between individuals in the same dataframe.
+
+    Return the mean, median, std deviation of all individuals within
     group_area
 
     Args:
@@ -497,7 +505,6 @@ def get_group_metrics(watlas_df, group_area, species_list):
 
     # per row in watlas_df
     for i in range(watlas_df.shape[0]):
-        # TODO this is not done! Its a mess.... very slow and species is idk....
         # get current row coords
         x1, y1 = watlas_df[i, "X"], watlas_df[i, "Y"]
 
@@ -518,6 +525,7 @@ def get_group_metrics(watlas_df, group_area, species_list):
         n_species.append(len(set(group_species)))
 
         for animal in species_list:
+            animal = animal.replace(" ", "_")
             if animal in group_species:
                 species_dict[f"{animal}_in_group"].append(1)
             else:
@@ -562,6 +570,30 @@ def get_group_metrics(watlas_df, group_area, species_list):
 
     return watlas_df
 
+def match_labels(path_watlas_df, path_labels):
+
+    watlas_df = pl.read_csv(path_watlas_df, dtypes={"time": pl.Datetime(time_unit="ms")})
+    labels = pl.read_csv(path_labels)
+    watlas_df = watlas_df.sort("time")
+
+
+    unique_tags = labels.filter(pl.col("Alert") == 1)["tag"].unique()
+
+    print(unique_tags.to_list())
+
+    start_time = pl.datetime(2023, 8, 23, 1, 37, 45)
+    end_time = pl.datetime(2023, 8, 23, 1, 43, 30)
+
+    watlas_df = watlas_df.with_columns(
+        (
+                (pl.col("tag").is_in(unique_tags)) &  # Tag is in unique_tags
+                (pl.col("time").is_between(start_time, end_time))  # Timestamp is in the range
+        ).cast(pl.Int8).alias("Alert")  # Set 1 if true, else 0
+    )
+
+    watlas_df.write_csv("watlas_with_labels.csv")
+
+
 
 def main():
     # time process
@@ -570,9 +602,11 @@ def main():
     sqlite_path = "data/SQLite/watlas-2023.sqlite"
     watlas_df = WatlasDataframe()
 
-    watlas_df.process_for_prediction(start_time="2023-08-01 00:00:00", end_time="2023-08-21 00:00:00",
+    watlas_df.process_for_prediction(start_time="2023-08-23 00:00:00", end_time="2023-08-23 02:00:00",
                                      sqlite_path="data/SQLite/watlas-2023.sqlite",
                                      tag_file="data/watlas_data/tags_watlas_all.xlsx")
+
+    match_labels("watlas_all.csv", "data/labels_1.csv")
     # watlas_df.get_watlas_data_sqlite([3001, 3002, 3016],
     #                                  tracking_time_start="2023-08-01 00:00:00",
     #                                  tracking_time_end="2023-08-21 00:00:00", sqlite_path=sqlite_path)
