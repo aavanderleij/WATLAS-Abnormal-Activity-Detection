@@ -251,7 +251,8 @@ class WatlasDataframe:
         """
         print("in process_for_prediction")
 
-        column_names = ["speed_in", "speed_out", "distance", "turn_angle"]
+        column_names = ["speed_in", "speed_out", "distance", "turn_angle", "group_size", "mean_turn_angle_group",
+                        "mean_dist_group", "mean_speed_group"]
         self.get_tag_data(tag_file)
 
         # get data from sqlite file
@@ -275,24 +276,6 @@ class WatlasDataframe:
         # empty dataframe list
         df_list = []
 
-        # group data frame by time stamp
-        for time, wat_df in self.watlas_df.group_by("time"):
-            # get distance
-            wat_df = get_group_metrics(wat_df, 500, self.species_list)
-
-            # cast columns to floats
-            wat_df = wat_df.with_columns([
-                pl.col("mean_dist").cast(pl.Float64),
-                pl.col("median_dist").cast(pl.Float64),
-                pl.col("std_dist").cast(pl.Float64)
-            ])
-
-            df_list.append(wat_df)
-
-        # concat dataframes into single dataframe
-        self.watlas_df = pl.concat(df_list)
-
-        df_list = []
         # smooth and calculate per tag (these calculations have to be done per individual bird)
         for tag, wat_df in self.watlas_df.group_by("tag"):
             # order by time
@@ -303,15 +286,46 @@ class WatlasDataframe:
             wat_df = get_speed(wat_df)
             # calculate turn angle per tag
             wat_df = get_turn_angle(wat_df)
-            # get speed, distance and turn angle form the previous rows
+
+            df_list.append(wat_df)
+
+        # concat dataframes to single dataframe
+        self.watlas_df = pl.concat(df_list)
+        # empty dataframe list
+        df_list = []
+
+        # group data frame by time stamp
+        for time, wat_df in self.watlas_df.group_by("time"):
+            # get distance
+            wat_df = get_group_metrics(wat_df, 500, self.species_list)
+
+            # cast columns to floats
+            wat_df = wat_df.with_columns([
+                pl.col("mean_dist_group").cast(pl.Float64),
+                pl.col("median_dist_group").cast(pl.Float64),
+                pl.col("std_dist_group").cast(pl.Float64)
+            ])
+
+            df_list.append(wat_df)
+
+        # concat dataframes into single dataframe
+        self.watlas_df = pl.concat(df_list)
+
+        df_list = []
+
+        for tag, wat_df in self.watlas_df.group_by("tag"):
+
+            wat_df = wat_df.sort(by="TIME")
+
+            # shift rows to get a window of values from the last 4 localizations
             wat_df = wat_df.with_columns(
-                [pl.col(col_name).shift(1).alias(f"{col_name}_1") for col_name in column_names] +
-                [pl.col(col_name).shift(2).alias(f"{col_name}_2") for col_name in column_names] +
-                [pl.col(col_name).shift(3).alias(f"{col_name}_3") for col_name in column_names] +
-                [pl.col(col_name).shift(4).alias(f"{col_name}_4") for col_name in column_names]
+                [pl.col(col_name).shift(-1).alias(f"{col_name}_1") for col_name in column_names] +
+                [pl.col(col_name).shift(-2).alias(f"{col_name}_2") for col_name in column_names] +
+                [pl.col(col_name).shift(-3).alias(f"{col_name}_3") for col_name in column_names] +
+                [pl.col(col_name).shift(-4).alias(f"{col_name}_4") for col_name in column_names]
             )
 
-            # add tag to list
+            # add tag df to list
             df_list.append(wat_df)
 
         # concat dataframes to single dataframe
@@ -328,6 +342,8 @@ class WatlasDataframe:
         print("processed data for prediction!")
         print("results saved in:")
         print(os.path.abspath("watlas_all.csv"))
+
+        print(self.watlas_df.columns)
 
 
 def smooth_data(watlas_df, moving_window=5):
@@ -492,6 +508,12 @@ def get_group_metrics(watlas_df, group_area, species_list):
     std_distances = []
     group_size = []
     n_species = []
+    mean_turn_angles = []
+    median_turn_angles = []
+    std_turn_angles = []
+    mean_speeds = []
+    median_speeds = []
+    std_speeds = []
 
     # set empty dict
     species_dict = {}
@@ -519,6 +541,8 @@ def get_group_metrics(watlas_df, group_area, species_list):
 
         # filter self and member out of group
         group = watlas_df.filter(mask)
+
+
         # get group size and species
         group_size.append(group.height)
         group_species = group["species"].to_list()
@@ -534,20 +558,45 @@ def get_group_metrics(watlas_df, group_area, species_list):
         # if there are more one member of group
         if distances.shape[0] != 0:
 
-            # get mean, median and standard deviation
+            # get distance mean, median and standard deviation
             mean = distances.mean()
             median_dist = distances.median()
             std_dist = distances.std()
+            
+            # get turn_angle mean, median and standard deviation
+            turn_mean = group["turn_angle"].mean()
+            turn_median = group["turn_angle"].median()
+            turn_std = group["turn_angle"].std()
+
+            speed_mean = group["speed_in"].mean()
+            speed_median = group["speed_in"].median()
+            speed_std = group["speed_in"].std()
 
         else:
             # if there are no members of group, set all to 0
             mean = 0.0
             median_dist = 0.0
             std_dist = 0.0
+            turn_mean = 0.0
+            turn_median = 0.0
+            turn_std = 0.0
+            speed_mean = 0.0
+            speed_median = 0.0
+            speed_std = 0.0
 
         mean_distances.append(mean)
         median_distances.append(median_dist)
         std_distances.append(std_dist)
+
+        mean_turn_angles.append(turn_mean)
+        median_turn_angles.append(turn_median)
+        std_turn_angles.append(turn_std)
+
+        mean_speeds.append(speed_mean)
+        median_speeds.append(speed_median)
+        std_speeds.append(speed_std)
+        
+        
 
         # print(f"Distances for row {i}: {distances}")
         # print(f"mean distance: {mean}")
@@ -556,11 +605,17 @@ def get_group_metrics(watlas_df, group_area, species_list):
         # print(f"Number of species for row {i}: {n_species[i]}")
 
     watlas_df = watlas_df.with_columns(
-        pl.Series("mean_dist", mean_distances),
-        pl.Series("median_dist", median_distances),
-        pl.Series("std_dist", std_distances),
+        pl.Series("mean_dist_group", mean_distances),
+        pl.Series("median_dist_group", median_distances),
+        pl.Series("std_dist_group", std_distances),
         pl.Series("group_size", group_size),
-        pl.Series("n_species", n_species))
+        pl.Series("n_species_group", n_species),
+        pl.Series('mean_turn_angle_group', mean_turn_angles),
+        pl.Series("median_turn_angle_group", median_turn_angles),
+        pl.Series("std_turn_angle_group", median_turn_angles),
+        pl.Series("mean_speed_group", mean_speeds),
+        pl.Series("speed_median_group", median_speeds),
+        pl.Series("speed_std_group", std_speeds))
 
     # Convert each list in species_dict into a column
     for species_name, in_group_list in species_dict.items():
