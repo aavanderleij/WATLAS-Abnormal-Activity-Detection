@@ -29,13 +29,18 @@ class ModelSetup:
         # TODO add tidal data
         # columns by type
         self.columns_to_drop = ['TAG', 'time', 'X', 'Y', 'TIME', 'tag', 'X_raw', 'Y_raw']
-        self.numerical_columns = ['NBS', 'VARX', 'VARY', 'group_size',
-                                  'n_species', 'mean_dist', 'median_dist', 'std_dist', 'distance', 'speed_in',
-                                  'speed_out', 'turn_angle', 'speed_in_1', 'speed_out_1', 'distance_1', 'turn_angle_1',
-                                  'speed_in_2', 'speed_out_2', 'distance_2', 'turn_angle_2', 'speed_in_3',
-                                  'speed_out_3', 'distance_3', 'turn_angle_3', 'speed_in_4', 'speed_out_4',
-                                  'distance_4',
-                                  'turn_angle_4', 'waterlevel']
+        self.numerical_columns = ['NBS', 'VARX', 'VARY', 'distance', 'speed_in', 'speed_out', 'turn_angle',
+                                  'mean_dist_group', 'median_dist_group', 'std_dist_group', 'group_size',
+                                  'n_species_group', 'mean_turn_angle_group', 'median_turn_angle_group',
+                                  'std_turn_angle_group', 'mean_speed_group', 'speed_median_group', 'speed_std_group',
+                                  'speed_in_1', 'speed_out_1', 'distance_1', 'turn_angle_1', 'group_size_1',
+                                  'mean_turn_angle_group_1', 'mean_dist_group_1', 'mean_speed_group_1', 'speed_in_2',
+                                  'speed_out_2', 'distance_2', 'turn_angle_2', 'group_size_2',
+                                  'mean_turn_angle_group_2', 'mean_dist_group_2', 'mean_speed_group_2', 'speed_in_3',
+                                  'speed_out_3', 'distance_3', 'turn_angle_3', 'group_size_3',
+                                  'mean_turn_angle_group_3', 'mean_dist_group_3', 'mean_speed_group_3', 'speed_in_4',
+                                  'speed_out_4', 'distance_4', 'turn_angle_4', 'group_size_4',
+                                  'mean_turn_angle_group_4', 'mean_dist_group_4', 'mean_speed_group_4', 'waterlevel']
         self.categorical_sting_columns = ["species"]
         self.categorical_bool_columns = ['islandica_in_group', 'oystercatcher_in_group', 'spoonbill_in_group',
                                          'bar-tailed_godwit_in_group', 'redshank_in_group', 'sanderling_in_group',
@@ -291,7 +296,7 @@ class ModelSetup:
 
         # compile model
         model.compile(optimizer='adam',
-                      loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
+                      loss=tf.keras.losses.BinaryCrossentropy(from_logits=False),
                       metrics=self.metrics,
                       run_eagerly=True)
 
@@ -317,6 +322,7 @@ class ModelSetup:
 
             plt.legend()
         plt.show()
+
     def train_model(self):
         print("loading data...")
         train_data = self.load_train_data()
@@ -336,12 +342,13 @@ class ModelSetup:
         # load weights
         print("fit model")
         history = ml_model.fit(train_set,
-                               epochs=2,
+                               epochs=10,
                                validation_data=val_set,
                                class_weight=class_weight)
 
         self.plot_metrics(history)
 
+        ml_model.save("Wrong_model", save_format="tf")
         print("get result")
         result = ml_model.evaluate(test_set, return_dict=True)
 
@@ -358,9 +365,8 @@ def main():
     ms = ModelSetup()
 
     result = ms.train_model()
-    print(result)
+    # print(result)
 
-    # ml_model.save("Wrong_model", save_format="tf")
     loaded_model = tf.keras.models.load_model("Wrong_model")
 
     train_data_df = pd.read_csv("watlas_all.csv")
@@ -374,12 +380,10 @@ def main():
 
     print(train_data_df.shape[0])
     print(len(results))
-    print(results)
-    probabilities = tf.math.sigmoid(results)
     print("probabilities:")
-    print(probabilities)
-    train_data_df['probability'] = results.numpy()
-    train_data_df['prediction'] = tf.cast(probabilities >= 0.5, tf.int32).numpy()
+    print(results)
+    train_data_df['probability'] = results
+    train_data_df['prediction'] = tf.cast(results >= 0.5, tf.int32).numpy()
 
     train_data_df.to_csv("predictions_example.csv")
 
