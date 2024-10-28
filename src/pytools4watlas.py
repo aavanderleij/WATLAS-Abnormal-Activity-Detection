@@ -10,6 +10,8 @@ author: Antsje van der Leij (https://github.com/aavanderleij)
 # imports
 import os
 import sys
+import configparser
+from pathlib import Path
 import math
 import timeit
 import warnings
@@ -23,16 +25,53 @@ class WatlasDataframe:
     Class for retrieving and processing WATLAS data.
     """
 
-    def __init__(self, watlas_df=None, tags_df=None):
+    def __init__(self, watlas_df=None, tags_df=None, config_file="config/config.ini"):
+
+        self.config = configparser.ConfigParser()
+        self.config.read(config_file)
+
+        self.start_time = self.config['timeframe']['start_time']
+        self.end_time = self.config['timeframe']['end_time']
+
+        self.tag_csv_path = Path(self.config['necessary files']['tag_file_path']).absolute()
+
 
         # set instance variable
         self.tags_df = tags_df
         self.watlas_df = watlas_df
         self.species_list = ["islandica", "oystercatcher", "spoonbill", "bar-tailed_godwit", "redshank", "sanderling",
-                             "dunlin", "turnstone", "curlew"]
+                             "dunlin", "turnstone", "curlew", "gray_plover"]
 
     # TODO add remote database access
-    def get_watlas_data_sqlite(self, tags, tracking_time_start, tracking_time_end, sqlite_path):
+
+    def get_db_uri(self):
+        """
+        Get the watlas database URI.
+        Returns:
+        """
+        if self.config.getboolean("database settings", "sqlite"):
+            sqlite_file_path = Path(self.config['database settings']['sqlite_file_path']).absolute()
+            db_uri = f"sqlite:///{sqlite_file_path.as_posix()}"
+            print("using sqlite file")
+
+        elif self.config.getboolean("database settings", "remote"):
+            username = self.config["database settings"]["username"]
+            password = self.config["database settings"]["password"]
+            database = self.config["database settings"]["database"]
+            host = self.config["database settings"]["host"]
+
+            # format sql uri
+            db_uri = f"mysql://{username}:{password}@{host}/{database}"
+            print("using mysql remote database")
+        else:
+            print("")
+            sys.exit("Both sqlite and remote are set to false! Please edit config file so at least one is false.")
+
+        print(db_uri)
+        return db_uri
+
+
+    def get_watlas_data(self, tags):
         """
         Get watlas data from a local SQLite database file and return it as a polars dataframe.
         Results will be of the specified tags and filtered to fit between start time and end time.
@@ -58,17 +97,17 @@ class WatlasDataframe:
              filtered between the start and end times.
 
         """
-        # format sql uri
-        sqlite_file = "sqlite://" + sqlite_path
-        print(sqlite_file)
+
+        # get uri
+        db_uri = self.get_db_uri()
 
         # format tag to server tag numbers
         server_tags = ', '.join(f'3100100{str(t)}' for t in tags)
 
         # TODO implement timezone conversion
         # convert sting to datetime object in utc time zone
-        tracking_time_start = datetime.strptime(tracking_time_start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
-        tracking_time_end = datetime.strptime(tracking_time_end, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+        tracking_time_start = datetime.strptime(self.start_time, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+        tracking_time_end = datetime.strptime(self.end_time, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
 
         # format time to unix timestamp in milliseconds
         tracking_time_start = int(tracking_time_start.timestamp() * 1000)
@@ -85,7 +124,7 @@ class WatlasDataframe:
         """
 
         # run query on sqlite file and get polars dataframe
-        self.watlas_df = pl.read_database_uri(query, sqlite_file)
+        self.watlas_df = pl.read_database_uri(query, db_uri)
 
         # check if dataframe is empty
         if self.watlas_df.shape[0] == 0:
@@ -168,7 +207,7 @@ class WatlasDataframe:
         # filter tags if tag is not in tags_to_remove
         self.watlas_df = self.watlas_df.filter(~pl.col("tag").is_in(tags_to_remove))
 
-    def get_tag_data(self, tag_csv_path):
+    def get_tag_data(self):
         """
         read exel file (.xmlx) containing tag data
 
@@ -180,10 +219,10 @@ class WatlasDataframe:
 
         """
         # TODO check if file exist and contains right columns
-        self.tags_df = pl.read_excel(tag_csv_path)
+        self.tags_df = pl.read_excel(self.tag_csv_path)
         # remove any spaces in species (bar-tailed godwit -> bar-tailed_godwit)
         self.tags_df = self.tags_df.with_columns(pl.col("species").str.replace(" ", "_").alias("species"))
-        print(self.tags_df["species"].unique())
+        print(list(self.tags_df["species"].unique()))
 
     def get_all_tags(self):
         """
@@ -206,6 +245,7 @@ class WatlasDataframe:
         # check if tags_df is not none
         if self.tags_df is None:
             # warn user species is not added because tag_df is none
+            # TODO get tags
             warnings.warn("No tag data found, species not added! Load tag data with get_tag_data before executing "
                           "this function!")
         else:
@@ -239,7 +279,7 @@ class WatlasDataframe:
         # join tidal dataframe with watlas_df on time, this adds the closest measured water level to watlas_df
         self.watlas_df = self.watlas_df.join_asof(tide_df, on="time", strategy="nearest")
 
-    def process_for_prediction(self, start_time, end_time, sqlite_path, tag_file):
+    def process_for_prediction(self):
         """
         get WATLAS data and process it for prediction.
 
@@ -247,19 +287,17 @@ class WatlasDataframe:
             start_time (str): start time for data fetching
             end_time (str): end time for data fetching
             tag_file (str): tag csv file path:
-            sqlite_path (str): sqlite file path:
         """
         print("in process_for_prediction")
 
         column_names = ["speed_in", "speed_out", "distance", "turn_angle", "group_size", "mean_turn_angle_group",
                         "mean_dist_group", "mean_speed_group"]
-        self.get_tag_data(tag_file)
+        self.get_tag_data()
 
         # get data from sqlite file
         all_tags = self.get_all_tags()
-        self.get_watlas_data_sqlite(all_tags,
-                                    tracking_time_start=start_time,
-                                    tracking_time_end=end_time, sqlite_path=sqlite_path)
+        # self.get_watlas_data_sqlite(all_tags)
+        self.get_watlas_data(all_tags)
 
         # filter minimum localisations
         self.filter_num_localisations()
@@ -269,6 +307,9 @@ class WatlasDataframe:
 
         # add species column
         self.get_species()
+
+        print("uniuqe specise 2023")
+        print(list(self.watlas_df["species"].unique()))
 
         # remove species not in species list (thing like pond bats, test tags, etc)
         self.watlas_df = self.watlas_df.filter(pl.col("species").is_in(self.species_list))
@@ -314,7 +355,6 @@ class WatlasDataframe:
         df_list = []
 
         for tag, wat_df in self.watlas_df.group_by("tag"):
-
             wat_df = wat_df.sort(by="TIME")
 
             # shift rows to get a window of values from the last 4 localizations
@@ -542,7 +582,6 @@ def get_group_metrics(watlas_df, group_area, species_list):
         # filter self and member out of group
         group = watlas_df.filter(mask)
 
-
         # get group size and species
         group_size.append(group.height)
         group_species = group["species"].to_list()
@@ -562,7 +601,7 @@ def get_group_metrics(watlas_df, group_area, species_list):
             mean = distances.mean()
             median_dist = distances.median()
             std_dist = distances.std()
-            
+
             # get turn_angle mean, median and standard deviation
             turn_mean = group["turn_angle"].mean()
             turn_median = group["turn_angle"].median()
@@ -595,8 +634,6 @@ def get_group_metrics(watlas_df, group_area, species_list):
         mean_speeds.append(speed_mean)
         median_speeds.append(speed_median)
         std_speeds.append(speed_std)
-        
-        
 
         # print(f"Distances for row {i}: {distances}")
         # print(f"mean distance: {mean}")
@@ -625,12 +662,11 @@ def get_group_metrics(watlas_df, group_area, species_list):
 
     return watlas_df
 
-def match_labels(path_watlas_df, path_labels):
 
+def match_labels(path_watlas_df, path_labels):
     watlas_df = pl.read_csv(path_watlas_df, dtypes={"time": pl.Datetime(time_unit="ms")})
     labels = pl.read_csv(path_labels)
     watlas_df = watlas_df.sort("time")
-
 
     unique_tags = labels.filter(pl.col("Alert") == 1)["tag"].unique()
 
@@ -649,22 +685,17 @@ def match_labels(path_watlas_df, path_labels):
     watlas_df.write_csv("watlas_with_labels.csv")
 
 
-
 def main():
     # time process
     start = timeit.default_timer()
-
-    sqlite_path = "data/SQLite/watlas-2023.sqlite"
     watlas_df = WatlasDataframe()
 
-    watlas_df.process_for_prediction(start_time="2023-08-23 00:00:00", end_time="2023-08-23 02:00:00",
-                                     sqlite_path="data/SQLite/watlas-2023.sqlite",
-                                     tag_file="data/watlas_data/tags_watlas_all.xlsx")
+    watlas_df.process_for_prediction()
 
     match_labels("watlas_all.csv", "data/labels_1.csv")
     # watlas_df.get_watlas_data_sqlite([3001, 3002, 3016],
     #                                  tracking_time_start="2023-08-01 00:00:00",
-    #                                  tracking_time_end="2023-08-21 00:00:00", sqlite_path=sqlite_path)
+    #                                  tracking_time_end="2023-08-21 00:00:00", sqlite_file_path=sqlite_file_path)
     #
     # print("watlas data found ")
     # print(watlas_df.get_watlas_dataframe())
