@@ -27,14 +27,23 @@ class WatlasDataframe:
 
     def __init__(self, watlas_df=None, tags_df=None, config_file="config/config.ini"):
 
-        self.config = configparser.ConfigParser()
-        self.config.read(config_file)
+        try:
+            self.config = configparser.ConfigParser()
+            self.config.read(config_file)
+        except configparser.Error as e:
+            print(sys.exit(f"could not open config file: {config_file}"))
 
         self.start_time = self.config['timeframe']['start_time']
         self.end_time = self.config['timeframe']['end_time']
 
-        self.tag_csv_path = Path(self.config['necessary files']['tag_file_path']).absolute()
+        self.output_dir = Path(self.config['output']['output directory'])
+        # add start time folder to prevent accidental overwrite
+        self.output_dir = self.output_dir / str(self.start_time).replace(":", "-").replace(" ", "_")
+        # make output_dir if not exist
+        os.makedirs(self.output_dir, exist_ok=True)
 
+        # get csv file path
+        self.tag_csv_path = Path(self.config['necessary files']['tag_file_path']).absolute()
 
         # set instance variable
         self.tags_df = tags_df
@@ -46,15 +55,21 @@ class WatlasDataframe:
 
     def get_db_uri(self):
         """
-        Get the watlas database URI.
+        Get the watlas database URI based on the settings in the config file.
         Returns:
         """
+        # if sqlite in config file is true
         if self.config.getboolean("database settings", "sqlite"):
             sqlite_file_path = Path(self.config['database settings']['sqlite_file_path']).absolute()
-            db_uri = f"sqlite:///{sqlite_file_path.as_posix()}"
-            print("using sqlite file")
+            if sqlite_file_path.exists():
+                db_uri = f"sqlite:///{sqlite_file_path.as_posix()}"
+                print("using sqlite file")
+            else:
+                sys.exit("SQLite file could not be found. Please check config file.")
 
+        # if remote in config file is true
         elif self.config.getboolean("database settings", "remote"):
+            # get mySQL info
             username = self.config["database settings"]["username"]
             password = self.config["database settings"]["password"]
             database = self.config["database settings"]["database"]
@@ -69,7 +84,6 @@ class WatlasDataframe:
 
         print(db_uri)
         return db_uri
-
 
     def get_watlas_data(self, tags):
         """
@@ -140,6 +154,10 @@ class WatlasDataframe:
         # get readable time
         self.get_datetime()
 
+        if self.config.getboolean("pytools4watlas", "save raw"):
+            raw_data_save_path = Path(self.output_dir) / "raw_watlas_data.csv"
+            self.watlas_df.write_csv(raw_data_save_path)
+
         return self.watlas_df
 
     def get_watlas_dataframe(self):
@@ -192,7 +210,7 @@ class WatlasDataframe:
             ]
         )
 
-    def filter_num_localisations(self, min_num_localisations=4):
+    def filter_num_localisations(self, min_num_localisations=5):
         """
         If a tag appears less then this number of localisations it's removed from the dataframe.
 
@@ -245,7 +263,6 @@ class WatlasDataframe:
         # check if tags_df is not none
         if self.tags_df is None:
             # warn user species is not added because tag_df is none
-            # TODO get tags
             warnings.warn("No tag data found, species not added! Load tag data with get_tag_data before executing "
                           "this function!")
         else:
@@ -253,12 +270,15 @@ class WatlasDataframe:
 
             self.watlas_df = self.watlas_df.join(self.tags_df.select(["tag", "species"]), on="tag", how="left")
 
-    def add_tide_data(self, path_tide_data):
+    def add_tide_data(self):
         """
         Add water level to watlas dataframe
+
         Args:
             path_tide_data (str): the path to the tide data file:
         """
+
+        path_tide_data = Path(self.config["necessary files"]["tidal_data_file_path"])
         # load in tidal data csv
         tide_df = pl.read_csv(path_tide_data, dtypes={"waterlevel": pl.Float64,
                                                       "dateTime": pl.Datetime(time_unit="ms")})
@@ -279,6 +299,89 @@ class WatlasDataframe:
         # join tidal dataframe with watlas_df on time, this adds the closest measured water level to watlas_df
         self.watlas_df = self.watlas_df.join_asof(tide_df, on="time", strategy="nearest")
 
+    def process_per_tag(self):
+        """
+        Group by tag and apply median smooth, caluclate distace, speed and turn angle
+        Returns:
+
+        """
+
+        # empty dataframe list
+        df_list = []
+
+        # smooth and calculate per tag (these calculations have to be done per individual bird)
+        for _, wat_df in self.watlas_df.group_by("tag"):
+            # order by time
+            wat_df = wat_df.sort(by="TIME")
+            # apply median smooth
+            wat_df = smooth_data(wat_df)
+            # calculate distance and speed per tag
+            wat_df = get_speed(wat_df)
+            # calculate turn angle per tag
+            wat_df = get_turn_angle(wat_df)
+
+            df_list.append(wat_df)
+
+        # concat dataframes to single dataframe
+        self.watlas_df = pl.concat(df_list)
+
+    def process_per_timestamp(self):
+        """
+        Group by timestamp ("time") and get metrics of all instances in per timestamp
+
+        Returns:
+
+        """
+        # empty dataframe list
+        df_list = []
+
+        # group data frame by time stamp
+        for _, wat_df in self.watlas_df.group_by("time"):
+            # get distance
+            wat_df = get_group_metrics(wat_df, 500, self.species_list)
+
+            # cast columns to floats
+            wat_df = wat_df.with_columns([
+                pl.col("mean_dist_group").cast(pl.Float64),
+                pl.col("median_dist_group").cast(pl.Float64),
+                pl.col("std_dist_group").cast(pl.Float64)
+            ])
+
+            df_list.append(wat_df)
+
+        # concat dataframes into single dataframe
+        self.watlas_df = pl.concat(df_list)
+
+    def shift_rows_for_time_window(self):
+        """
+        shift rows to get context of previous 4 localisations
+        Returns:
+
+        """
+        # columns to shift
+        column_names = ["speed_in", "speed_out", "distance", "turn_angle", "group_size", "mean_turn_angle_group",
+                        "mean_dist_group", "mean_speed_group"]
+
+        df_list = []
+
+        for _, wat_df in self.watlas_df.group_by("tag"):
+            # sort on time
+            wat_df = wat_df.sort(by="TIME")
+
+            # shift rows to get a window of values from the last 4 localizations
+            wat_df = wat_df.with_columns(
+                [pl.col(col_name).shift(-1).alias(f"{col_name}_1") for col_name in column_names] +
+                [pl.col(col_name).shift(-2).alias(f"{col_name}_2") for col_name in column_names] +
+                [pl.col(col_name).shift(-3).alias(f"{col_name}_3") for col_name in column_names] +
+                [pl.col(col_name).shift(-4).alias(f"{col_name}_4") for col_name in column_names]
+            )
+
+            # add tag df to list
+            df_list.append(wat_df)
+
+        # concat dataframes to single dataframe
+        self.watlas_df = pl.concat(df_list)
+
     def process_for_prediction(self):
         """
         get WATLAS data and process it for prediction.
@@ -290,8 +393,6 @@ class WatlasDataframe:
         """
         print("in process_for_prediction")
 
-        column_names = ["speed_in", "speed_out", "distance", "turn_angle", "group_size", "mean_turn_angle_group",
-                        "mean_dist_group", "mean_speed_group"]
         self.get_tag_data()
 
         # get data from sqlite file
@@ -314,76 +415,27 @@ class WatlasDataframe:
         # remove species not in species list (thing like pond bats, test tags, etc)
         self.watlas_df = self.watlas_df.filter(pl.col("species").is_in(self.species_list))
 
-        # empty dataframe list
-        df_list = []
+        # do smoothing and calculations that have to be done per tag
+        self.process_per_tag()
 
-        # smooth and calculate per tag (these calculations have to be done per individual bird)
-        for tag, wat_df in self.watlas_df.group_by("tag"):
-            # order by time
-            wat_df = wat_df.sort(by="TIME")
-            # apply median smooth
-            wat_df = smooth_data(wat_df)
-            # calculate distance and speed per tag
-            wat_df = get_speed(wat_df)
-            # calculate turn angle per tag
-            wat_df = get_turn_angle(wat_df)
-
-            df_list.append(wat_df)
-
-        # concat dataframes to single dataframe
-        self.watlas_df = pl.concat(df_list)
-        # empty dataframe list
-        df_list = []
-
-        # group data frame by time stamp
-        for time, wat_df in self.watlas_df.group_by("time"):
-            # get distance
-            wat_df = get_group_metrics(wat_df, 500, self.species_list)
-
-            # cast columns to floats
-            wat_df = wat_df.with_columns([
-                pl.col("mean_dist_group").cast(pl.Float64),
-                pl.col("median_dist_group").cast(pl.Float64),
-                pl.col("std_dist_group").cast(pl.Float64)
-            ])
-
-            df_list.append(wat_df)
-
-        # concat dataframes into single dataframe
-        self.watlas_df = pl.concat(df_list)
-
-        df_list = []
-
-        for tag, wat_df in self.watlas_df.group_by("tag"):
-            wat_df = wat_df.sort(by="TIME")
-
-            # shift rows to get a window of values from the last 4 localizations
-            wat_df = wat_df.with_columns(
-                [pl.col(col_name).shift(-1).alias(f"{col_name}_1") for col_name in column_names] +
-                [pl.col(col_name).shift(-2).alias(f"{col_name}_2") for col_name in column_names] +
-                [pl.col(col_name).shift(-3).alias(f"{col_name}_3") for col_name in column_names] +
-                [pl.col(col_name).shift(-4).alias(f"{col_name}_4") for col_name in column_names]
-            )
-
-            # add tag df to list
-            df_list.append(wat_df)
-
-        # concat dataframes to single dataframe
-        self.watlas_df = pl.concat(df_list)
+        # process dataframe per timestamp to get group metrics
+        self.process_per_timestamp()
+        self.shift_rows_for_time_window()
 
         # # sort by time
         self.watlas_df = self.watlas_df.sort(by="time")
-        self.add_tide_data("data/watlas_data/allYears-gemeten_waterhoogte-west_terschelling-clean-UTC.csv")
+        # get tide data
+        self.add_tide_data()
         # set NaN and NULLs to 0
         self.watlas_df = self.watlas_df.fill_nan(0).fill_null(0)
 
         # write to csv
-        self.watlas_df.write_csv("watlas_all.csv")
+        prediction_data_save_path = Path(self.output_dir) / "watlas_prediction_data.csv"
+        self.watlas_df.write_csv(prediction_data_save_path)
         print("processed data for prediction!")
         print("results saved in:")
-        print(os.path.abspath("watlas_all.csv"))
+        print(os.path.abspath(prediction_data_save_path))
 
-        print(self.watlas_df.columns)
 
 
 def smooth_data(watlas_df, moving_window=5):
