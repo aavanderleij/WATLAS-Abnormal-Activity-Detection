@@ -44,7 +44,8 @@ class ModelSetup:
         self.categorical_sting_columns = ["species"]
         self.categorical_bool_columns = ['islandica_in_group', 'oystercatcher_in_group', 'spoonbill_in_group',
                                          'bar-tailed_godwit_in_group', 'redshank_in_group', 'sanderling_in_group',
-                                         'dunlin_in_group', 'turnstone_in_group', 'curlew_in_group']
+                                         'dunlin_in_group', 'turnstone_in_group', 'curlew_in_group',
+                                         "gray_plover_in_group"]
 
         self.metrics = [
             keras.metrics.BinaryCrossentropy(name='cross entropy'),
@@ -105,6 +106,10 @@ class ModelSetup:
         weight_for_1 = (1 / pos) * (total / 2.0)
 
         class_weight = {0: weight_for_0, 1: weight_for_1}
+
+        # set initial bais
+        initial_bias = np.log([pos / neg])
+        self.output_bias = keras.initializers.Constant(initial_bias)
 
         print('Weight for class 0: {:.2f}'.format(weight_for_0))
         print('Weight for class 1: {:.2f}'.format(weight_for_1))
@@ -289,6 +294,41 @@ class ModelSetup:
         # dropout layer
         x = tf.keras.layers.Dropout(0.5)(x)
         # output layer
+        output = tf.keras.layers.Dense(1, activation="sigmoid", bias_initializer=self.output_bias)(x)
+
+        # create model
+        model = tf.keras.Model(all_inputs, output)
+
+        # compile model
+        model.compile(optimizer='adam',
+                      loss=tf.keras.losses.BinaryCrossentropy(from_logits=False),
+                      metrics=self.metrics,
+                      run_eagerly=True)
+        return model
+
+    def create_model_zero_Bias(self, encoded_features, all_inputs):
+        """
+        creates a compiled model
+
+        Args:
+            encoded_features (list): A list with encoded features
+            all_inputs (dict): A dictionary of input tensors for eacht feature, key is feature name, value is
+             corresponding tensor.
+
+        Returns:
+
+        """
+        # Concat all features into single tensor
+        all_features = tf.keras.layers.concatenate(encoded_features)
+        # dense layer
+        x = tf.keras.layers.Dense(64, activation="relu")(all_features)
+        # dropout layer
+        x = tf.keras.layers.Dropout(0.5)(x)
+        # dense layer
+        x = tf.keras.layers.Dense(32, activation="relu")(all_features)
+        # dropout layer
+        x = tf.keras.layers.Dropout(0.5)(x)
+        # output layer
         output = tf.keras.layers.Dense(1, activation="sigmoid")(x)
 
         # create model
@@ -299,9 +339,8 @@ class ModelSetup:
                       loss=tf.keras.losses.BinaryCrossentropy(from_logits=False),
                       metrics=self.metrics,
                       run_eagerly=True)
-
-
         return model
+
 
     def plot_metrics(self, history):
         metrics = ['loss', 'prc', 'precision', 'recall']
@@ -323,6 +362,19 @@ class ModelSetup:
             plt.legend()
         plt.show()
 
+    def plot_loss(self, history, label, n):
+        # Use a log scale on y-axis to show the wide range of values.
+        plt.semilogy(history.epoch, history.history['loss'],
+                     color=colors[n], label='Train ' + label)
+        plt.semilogy(history.epoch, history.history['val_loss'],
+                     color=colors[n], label='Val ' + label,
+                     linestyle="--")
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+
+        plt.show()
+
     def train_model(self):
         print("loading data...")
         train_data = self.load_train_data()
@@ -339,14 +391,26 @@ class ModelSetup:
         all_inputs, encoded_features = self.encode_features(train_set)
         print("compile model")
         ml_model = self.create_model(encoded_features, all_inputs)
-        # load weights
+        zero_model = self.create_model_zero_Bias(encoded_features, all_inputs)
+
         print("fit model")
         history = ml_model.fit(train_set,
                                epochs=10,
                                validation_data=val_set,
                                class_weight=class_weight)
 
+        zero_bias_history = zero_model.fit(train_set,
+                                epochs=10,
+                                validation_data=val_set,
+                                class_weight=class_weight)
+
         self.plot_metrics(history)
+        self.plot_metrics(zero_bias_history)
+
+        self.plot_loss(history, "carefull bias", 0)
+        self.plot_loss(zero_bias_history, "zero bias", 1)
+
+        print(ml_model.summary())
 
         ml_model.save("Wrong_model", save_format="tf")
         print("get result")
