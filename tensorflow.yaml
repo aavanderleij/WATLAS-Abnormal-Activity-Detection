@@ -5,6 +5,8 @@ channels:
 dependencies:
   - numpy==1.21.6
   - pandas==1.1.3
+  - seaborn
+  - scikit-learn
   - pip==24.0
   - pip:
       - tensorflow==2.11.0
