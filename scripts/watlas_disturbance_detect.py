@@ -8,12 +8,9 @@ import pytools4watlas
 import subprocess
 
 
-
-
 class DisturbanceDetector:
 
     def __init__(self, config_file="config/config.ini"):
-
 
         try:
             self.config = configparser.ConfigParser()
@@ -23,16 +20,18 @@ class DisturbanceDetector:
 
         self.preprocess_watlas_data(config_file)
 
+        self.load_model(config_file)
 
     def preprocess_watlas_data(self, config_file):
 
         watlas_tool = pytools4watlas.WatlasDataframe(config_file=config_file)
         watlas_tool.process_for_prediction()
 
-
     # load model
-    def load_model(self):
-        ...
+    def load_model(self, config_file):
+        subprocess.run(["conda", "--version"], shell=True)
+
+        subprocess.run(['conda', 'run', '-n', 'tensorflow', 'python', 'src/watlas_predictor.py', config_file], shell=True)
 
         # something subprocces
 
@@ -42,10 +41,9 @@ class DisturbanceDetector:
 
         # profit
 
+
 def main():
-
     DisturbanceDetector(config_file="config/config.ini")
-
 
 
 if __name__ == "__main__":
