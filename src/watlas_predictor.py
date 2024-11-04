@@ -22,7 +22,11 @@ class WatlasPredictor:
         self.start_time = self.config['timeframe']['start_time']
         # get output dir from config file
         self.result_dir = Path(self.config['output']['output directory'])
-        
+
+        self.columns_to_drop = ['TAG', 'time', 'X', 'Y', 'TIME', 'tag', 'X_raw', 'Y_raw']
+
+        self.result_dir = self.result_dir / str(self.start_time).replace(":", "-").replace(" ", "_")
+
         loaded_model = tf.keras.models.load_model("models/disturbance_model")
 
         input_df = pd.read_csv(Path(self.result_dir) / "watlas_preprediction.csv")
@@ -31,9 +35,6 @@ class WatlasPredictor:
 
         self.write_results(dataframe_with_predictions)
 
-
-
-    
     def run_model(self, input_df, loaded_model):
         """
         runs loaded model in input dataframe
@@ -44,7 +45,6 @@ class WatlasPredictor:
 
         """
 
-
         # drop non parameters
         predict_data_df = input_df.drop(columns=self.columns_to_drop)
         # make dataframe ready for being loaded into model, with column name being parameter name and value as tensor
@@ -52,10 +52,8 @@ class WatlasPredictor:
         # predict
         results = loaded_model.predict(input_dict)
 
-
-
         results_dataframe = input_df.assign(predicted=results)
-        
+
         return results_dataframe
 
     def write_results(self, results_dataframe):
@@ -69,13 +67,9 @@ class WatlasPredictor:
 
         """
 
-        
-
         # add start time folder to prevent accidental overwrite
-        result_dir = self.result_dir / str(self.start_time).replace(":", "-").replace(" ", "_")
 
-        results_dataframe.to_csv(Path(result_dir) / "predictions.csv")
-
+        results_dataframe.to_csv(Path(self.result_dir) / "predictions.csv")
 
 
 def main():
