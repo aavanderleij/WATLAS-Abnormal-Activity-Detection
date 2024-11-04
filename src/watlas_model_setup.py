@@ -24,9 +24,7 @@ colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 class ModelSetup:
 
     def __init__(self):
-        # TODO add  exact species per group
-        # TODO add time of day/time to high tide when more training data is available
-        # TODO add tidal data
+
         # columns by type
         self.columns_to_drop = ['TAG', 'time', 'X', 'Y', 'TIME', 'tag', 'X_raw', 'Y_raw']
         self.numerical_columns = ['NBS', 'VARX', 'VARY', 'distance', 'speed_in', 'speed_out', 'turn_angle',
@@ -61,7 +59,7 @@ class ModelSetup:
             keras.metrics.AUC(name='prc', curve='PR'),
         ]
 
-    def load_train_data(self, path_to_traindata="watlas_with_labels.csv"):
+    def load_train_data(self, path_to_traindata="training_data_v6.csv"):
         """
         Read training data from csv file and load it into a pandas dataframe.
         Args:
@@ -115,7 +113,6 @@ class ModelSetup:
         print('Weight for class 1: {:.2f}'.format(weight_for_1))
 
         # split training data into training data set, validation data set and a test data set
-        # TODO use scikit train test split to get random proportinal validation sets
         train, test = train_test_split(dataframe, test_size=0.2)
         train, val = train_test_split(train, test_size=0.2)
 
@@ -256,8 +253,7 @@ class ModelSetup:
             # get normalization layer for header
             encoding_layer = self.get_category_encoding_layer(name=header,
                                                               dataset=dataset,
-                                                              dtype='string',
-                                                              max_tokens=9)
+                                                              dtype='string')
             # Apply normalization
             encoded_categorical_col = encoding_layer(categorical_col)
             # Add columns input layer
@@ -270,6 +266,56 @@ class ModelSetup:
             encoded_features.append(bool_col)
 
         return all_inputs, encoded_features
+    
+    def encode_non_num_features(self, dataset):
+        """
+        Encode features based on type of value (catagorical or numarical).
+
+        categorical values wil be encoded using one-hot encoding.
+
+        Args:
+            dataset (tf.data.Dataset): A TensorFlow dataset with features to be encoded.
+
+        Returns:
+
+        """
+        all_inputs = {}
+        encoded_features = []
+
+        # Numerical features.
+        for header in self.numerical_columns:
+            # create an input tensor for every header in numerical_columns
+            numeric_col = tf.keras.Input(shape=(1,), name=header)
+
+            encoded_features.append(numeric_col)
+
+        for header in self.categorical_sting_columns:
+            # create an input tensor for every header in categorical_columns
+            categorical_col = tf.keras.Input(shape=(1,), name=header, dtype='string')
+            # get normalization layer for header
+            encoding_layer = self.get_category_encoding_layer(name=header,
+                                                              dataset=dataset,
+                                                              dtype='string')
+            # Apply normalization
+            encoded_categorical_col = encoding_layer(categorical_col)
+            # Add columns input layer
+            all_inputs[header] = categorical_col
+            encoded_features.append(encoded_categorical_col)
+
+        for header in self.categorical_bool_columns:
+            bool_col = tf.keras.Input(shape=(1,), name=header)
+            all_inputs[header] = bool_col
+            encoded_features.append(bool_col)
+
+        return all_inputs, encoded_features
+
+    def early_stopping(self):
+        return tf.keras.callbacks.EarlyStopping(
+            monitor='val_prc',
+            verbose=1,
+            patience=10,
+            mode='max',
+            restore_best_weights=True)
 
     def create_model(self, encoded_features, all_inputs):
         """
@@ -288,11 +334,15 @@ class ModelSetup:
         # dense layer
         x = tf.keras.layers.Dense(64, activation="relu")(all_features)
         # dropout layer
-        x = tf.keras.layers.Dropout(0.5)(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
         # dense layer
         x = tf.keras.layers.Dense(32, activation="relu")(all_features)
         # dropout layer
-        x = tf.keras.layers.Dropout(0.5)(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
+        # dense layer
+        x = tf.keras.layers.Dense(12, activation="relu")(all_features)
+        # dropout layer
+        x = tf.keras.layers.Dropout(0.2)(x)
         # output layer
         output = tf.keras.layers.Dense(1, activation="sigmoid", bias_initializer=self.output_bias)(x)
 
@@ -306,7 +356,7 @@ class ModelSetup:
                       run_eagerly=True)
         return model
 
-    def create_model_zero_Bias(self, encoded_features, all_inputs):
+    def create_model_no_normal(self, encoded_features, all_inputs):
         """
         creates a compiled model
 
@@ -323,11 +373,15 @@ class ModelSetup:
         # dense layer
         x = tf.keras.layers.Dense(64, activation="relu")(all_features)
         # dropout layer
-        x = tf.keras.layers.Dropout(0.5)(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
         # dense layer
         x = tf.keras.layers.Dense(32, activation="relu")(all_features)
         # dropout layer
-        x = tf.keras.layers.Dropout(0.5)(x)
+        x = tf.keras.layers.Dropout(0.2)(x)
+        # dense layer
+        x = tf.keras.layers.Dense(12, activation="relu")(all_features)
+        # dropout layer
+        x = tf.keras.layers.Dropout(0.2)(x)
         # output layer
         output = tf.keras.layers.Dense(1, activation="sigmoid")(x)
 
@@ -342,7 +396,7 @@ class ModelSetup:
         return model
 
 
-    def plot_metrics(self, history):
+    def plot_metrics(self, history, save_name):
         metrics = ['loss', 'prc', 'precision', 'recall']
         for n, metric in enumerate(metrics):
             name = metric.replace("_", " ").capitalize()
@@ -360,20 +414,29 @@ class ModelSetup:
                 plt.ylim([0, 1])
 
             plt.legend()
+        plt.savefig(save_name)
         plt.show()
 
-    def plot_loss(self, history, label, n):
+
+    def plot_loss(self, history, other_history, label, other_label, n, n_2):
         # Use a log scale on y-axis to show the wide range of values.
         plt.semilogy(history.epoch, history.history['loss'],
                      color=colors[n], label='Train ' + label)
         plt.semilogy(history.epoch, history.history['val_loss'],
                      color=colors[n], label='Val ' + label,
                      linestyle="--")
+
+        plt.semilogy(other_history.epoch, other_history.history['loss'],
+                     color=colors[n_2], label='Train ' + other_label)
+        plt.semilogy(other_history.epoch, other_history.history['val_loss'],
+                     color=colors[n_2], label='Val ' + other_label,
+                     linestyle="--")
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
         plt.legend()
-
+        plt.savefig("New_dataset_compare")
         plt.show()
+
 
     def train_model(self):
         print("loading data...")
@@ -390,29 +453,32 @@ class ModelSetup:
         print("encode features")
         all_inputs, encoded_features = self.encode_features(train_set)
         print("compile model")
+        zero_model = self.create_model_no_normal(encoded_features, all_inputs)
+        zero_model.save_weights('/checkpoints/inital_weights')
         ml_model = self.create_model(encoded_features, all_inputs)
-        zero_model = self.create_model_zero_Bias(encoded_features, all_inputs)
+        ml_model.load_weights('/checkpoints/inital_weights')
 
         print("fit model")
         history = ml_model.fit(train_set,
-                               epochs=10,
+                               epochs=200,
+                               callbacks=[self.early_stopping()],
                                validation_data=val_set,
                                class_weight=class_weight)
 
         zero_bias_history = zero_model.fit(train_set,
-                                epochs=10,
+                                epochs=200,
+                                callbacks=[self.early_stopping()],
                                 validation_data=val_set,
                                 class_weight=class_weight)
 
-        self.plot_metrics(history)
-        self.plot_metrics(zero_bias_history)
+        self.plot_metrics(history, "encoded_new_data")
+        self.plot_metrics(zero_bias_history, "not_encoded_new_data")
 
-        self.plot_loss(history, "carefull bias", 0)
-        self.plot_loss(zero_bias_history, "zero bias", 1)
+        self.plot_loss(history, zero_bias_history, "carefull bias",  "zero bias", 0, 1)
 
-        print(ml_model.summary())
+        # print(ml_model.summary())
 
-        ml_model.save("Wrong_model", save_format="tf")
+        ml_model.save("test_model_v2", save_format="tf")
         print("get result")
         result = ml_model.evaluate(test_set, return_dict=True)
 
@@ -434,7 +500,6 @@ def main():
     loaded_model = tf.keras.models.load_model("Wrong_model")
 
     train_data_df = pd.read_csv("watlas_all.csv")
-    # TODO keep an eye on parameters
     # drop columns not used for training
     train_data_df = train_data_df.drop(columns=ms.columns_to_drop)
 
