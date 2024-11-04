@@ -25,7 +25,7 @@ class WatlasDataframe:
     Class for retrieving and processing WATLAS data.
     """
 
-    def __init__(self, watlas_df=None, tags_df=None, config_file="config/config.ini"):
+    def __init__(self, watlas_df=None, tags_df=None, config_file="config/config_with_data.ini"):
 
         try:
             self.config = configparser.ConfigParser()
@@ -102,9 +102,6 @@ class WatlasDataframe:
 
         Args:
             tags (list): list of WATLAS tags
-            tracking_time_start (str): start of tracking time
-            tracking_time_end (str): end of tracking time
-            sqlite_file:
 
         Returns:
             raw_watlas_df (pd.DataFrame): a polars dataframe with localizations of the specified tag,
@@ -237,10 +234,14 @@ class WatlasDataframe:
 
         """
         # TODO check if file exist and contains right columns
-        self.tags_df = pl.read_excel(self.tag_csv_path)
-        # remove any spaces in species (bar-tailed godwit -> bar-tailed_godwit)
-        self.tags_df = self.tags_df.with_columns(pl.col("species").str.replace(" ", "_").alias("species"))
-        print(list(self.tags_df["species"].unique()))
+
+        if self.tag_csv_path.exists():
+
+            self.tags_df = pl.read_excel(self.tag_csv_path)
+            # remove any spaces in species (bar-tailed godwit -> bar-tailed_godwit)
+            self.tags_df = self.tags_df.with_columns(pl.col("species").str.replace(" ", "_").alias("species"))
+        else:
+            sys.exit(f"tag file not found: {self.tag_csv_path.absolute()}. Check config file")
 
     def get_all_tags(self):
         """
@@ -409,10 +410,7 @@ class WatlasDataframe:
         # add species column
         self.get_species()
 
-        print("uniuqe specise 2023")
-        print(list(self.watlas_df["species"].unique()))
-
-        # remove species not in species list (thing like pond bats, test tags, etc)
+        # remove species not in species list (things like pond bats, test tags, etc)
         self.watlas_df = self.watlas_df.filter(pl.col("species").is_in(self.species_list))
 
         # do smoothing and calculations that have to be done per tag
@@ -430,11 +428,12 @@ class WatlasDataframe:
         self.watlas_df = self.watlas_df.fill_nan(0).fill_null(0)
 
         # write to csv
-        prediction_data_save_path = Path(self.output_dir) / "watlas_prediction_data.csv"
+        prediction_data_save_path = Path(self.output_dir) / "watlas_preprediction.csv"
         self.watlas_df.write_csv(prediction_data_save_path)
         print("processed data for prediction!")
         print("results saved in:")
         print(os.path.abspath(prediction_data_save_path))
+
 
 
 
@@ -554,7 +553,6 @@ def get_turn_angle(watlas_df):
     watlas_df = watlas_df.with_columns(pl.Series(angle).alias("turn_angle"))
 
     return watlas_df
-
 
 def count_species(watlas_df, species_list):
     """
@@ -715,71 +713,22 @@ def get_group_metrics(watlas_df, group_area, species_list):
     return watlas_df
 
 
-def match_labels(path_watlas_df, path_labels):
-    watlas_df = pl.read_csv(path_watlas_df, dtypes={"time": pl.Datetime(time_unit="ms")})
-    labels = pl.read_csv(path_labels)
-    watlas_df = watlas_df.sort("time")
-
-    unique_tags = labels.filter(pl.col("Alert") == 1)["tag"].unique()
-
-    print(unique_tags.to_list())
-
-    start_time = pl.datetime(2023, 8, 23, 1, 37, 45)
-    end_time = pl.datetime(2023, 8, 23, 1, 43, 30)
-
-    watlas_df = watlas_df.with_columns(
-        (
-                (pl.col("tag").is_in(unique_tags)) &  # Tag is in unique_tags
-                (pl.col("time").is_between(start_time, end_time))  # Timestamp is in the range
-        ).cast(pl.Int8).alias("Alert")  # Set 1 if true, else 0
-    )
-
-    watlas_df.write_csv("watlas_with_labels.csv")
 
 
 def main():
+    """
+    main function
+    Returns:
+
+    """
     # time process
     start = timeit.default_timer()
     watlas_df = WatlasDataframe()
 
     watlas_df.process_for_prediction()
 
-    match_labels("watlas_all.csv", "data/labels_1.csv")
-    # watlas_df.get_watlas_data_sqlite([3001, 3002, 3016],
-    #                                  tracking_time_start="2023-08-01 00:00:00",
-    #                                  tracking_time_end="2023-08-21 00:00:00", sqlite_file_path=sqlite_file_path)
-    #
-    # print("watlas data found ")
-    # print(watlas_df.get_watlas_dataframe())
-    #
-    # watlas_df.filter_num_localisations()
-    # print("filtered data ")
-    # # print(watlas_df.get_watlas_dataframe())
-    #
-    # watlas_df.aggregate_dataframe()
-    # print("aggregated data ")
-    # # print(watlas_df.get_watlas_dataframe())
-    #
-    # watlas_df.get_tag_data("data/watlas_data/tags_watlas_all.xlsx")
-    #
-    # print("species")
-    # watlas_df.get_species()
-    # # print(watlas_df.get_watlas_dataframe())
-    #
-    # watlas_df = watlas_df.get_watlas_dataframe()
-    #
-    # df_list = []
-    # for tag, wat_df in watlas_df.group_by("tag"):
-    #     wat_df = smooth_data(wat_df)
-    #     wat_df = get_speed(wat_df)
-    #     wat_df = get_turn_angle(wat_df)
-    #
-    #     df_list.append(wat_df)
-    #
-    # watlas_df = pl.concat(df_list)
-    # watlas_df.write_csv("watlas_all.csv")
-    # print(watlas_df)
-    # print(watlas_df.columns)
+    # match_labels("C:/Users/avanderleij/OneDrive - NIOZ/Bureaublad/WATLAS_disturbance/track_videos/tag_labeling_videos/2023-08-28 17-09-15/2023-08-23_17-04-00/watlas_preprediction.csv", "C:/Users/avanderleij/OneDrive - NIOZ/Bureaublad/WATLAS_disturbance/track_videos/tag_labeling_videos/2023-08-28 17-09-15/2023-08-28 17-09-15_labeld.csv")
+
 
     stop = timeit.default_timer()
     print('Time: ', stop - start)
