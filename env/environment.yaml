@@ -1,4 +1,4 @@
-name: watlas_disturbance_model
+name: watlas_disturbance
 channels:
   - conda-forge
   - nvidia
