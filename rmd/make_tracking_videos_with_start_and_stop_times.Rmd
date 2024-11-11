@@ -1,0 +1,278 @@
+---
+title: "WATLAS animation"
+output: html_notebook
+---
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r loading packages}
+## install packages
+
+# install.packages("devtools")
+### official stable version of tools4watlas
+##(for animating tacks the track function needs to added seperate
+#devtools::install_github("allertbijleveld/tools4watlas")
+
+# development branch for animating tracks in tools4watlas.
+# No need source function-video_track if this one is installed
+devtools::install_github("aavanderleij/tools4watlas@feature_video_tracks")
+
+# install.packages("lubridate")
+## load packages
+library(tools4watlas)
+library(readxl)
+library(lubridate)
+
+
+# set working dir
+setwd("WATLAS_disturbance")
+```
+
+```{r parameters}
+
+### edit these parametes to you own specificatoins
+
+# imprort function-video_track (skip if development branch if installed)
+# source("tools4watlas/R/fun_video_track.r")
+
+# path to tag exel file
+tag_df <- as.data.frame(readxl::read_excel("watlas_tag_file.xlsx"))
+
+# path to sql file
+sqlite_db <- paste0("/data/SQLite/",
+                    "watlas-2023", # database name
+                    ".sqlite") # file exention (sqlite)
+
+# videos will be generated at 4 hour intervals between start and end time
+start_time <- ymd_hms("2023-08-29 04:00:00", tz = "UTC")
+end_time <- ymd_hms("2023-10-01 23:59:59", tz = "UTC")
+```
+
+
+
+```{r tag processing}
+# prosses data from the tag file
+
+# filter tags where species is NA
+tag_df <- tag_df[!is.na(tag_df$species), ]
+# get a list of all tags
+tag_list_all <- tag_df$tag
+
+# specify format of tag numbers
+tag_list_all <- stringr::str_pad(
+                                 as.character(tag_list_all),
+                                 4, # WATLAS tag string is four characters
+                                 pad = "0")
+
+# drop NA from tag list
+tag_list_all <- tag_list_all[!is.na(tag_list_all)]
+# for collecting data from server, long tag format is used
+server_tag_list_all <- paste0("3100100", tag_list_all)
+
+#> get species from tag metadata
+tag_idx <- match(tag_list_all, tag_df$tag)
+species_all <- tag_df$species[tag_idx]
+
+```
+
+
+```{r making videos from tracking data}
+
+
+# get database connection
+my_db_connection <- RSQLite::dbConnect(RSQLite::SQLite(), sqlite_db)
+
+# set loop start time as current time
+current_time <- start_time
+
+
+while (current_time <= end_time) {
+  # Calculate start and end times, convert to character
+  start <- current_time
+  end <- format(with_tz(current_time + hours(4), tzone = "UTC"),
+                "%Y-%m-%d %H:%M:%S")
+
+  # move window 4 hours
+  current_time <- end
+  # print times
+  print(start)
+  print(end)
+  
+  # get data
+  ldf_raw <- lapply(
+    server_tag_list_all,
+    atl_get_data,
+    tracking_time_start = start,
+    tracking_time_end = end,
+    timezone = "UTC",
+    sqlite_db = sqlite_db,
+    use_connection = my_db_connection
+  )
+  
+  # get remote data
+  # ldf_raw<- lapply(
+  #               server_tag_list_all,
+  #               atl_get_data,
+  #               tracking_time_start = start,
+  #               tracking_time_end = end,
+  #               timezone = "UTC",
+  #               host= "host",
+  #               database = "database",
+  #               username = "username",
+  #               password = "password")
+
+  # variance limit in meters squared
+  var_max  <- 5000
+  # filter for var_max (to reduce localisaton errors)
+  ldf_clean <- lapply(
+    ldf_raw,
+    atl_filter_covariates,
+    filters = c(
+      "VARX < var_max",
+      "VARY < var_max"
+    )
+  )
+
+  # apply a median smoother
+  # number of localizations within window for smoothing
+  med_filter <- 5
+  ldf_smoothed <- lapply(
+    ldf_clean,
+    atl_median_smooth,
+    time = "TIME",
+    moving_window = med_filter
+  )
+
+
+  # filter  for minimum number of localizations per bird
+  # specify minimum
+    min_locs <- 2
+    # count localizations per bird
+    ldf_n <- lapply(ldf_smoothed, nrow)
+    # replace NULL counts for 0
+    ldf_n[lengths(ldf_n) == 0] <- 0
+    # create vector of counts
+    n <- unlist(ldf_n)
+    # filter number of localizations
+    ldf <- ldf_smoothed[n >= min_locs]
+    # clean tag vector
+    tag_list <- tag_list_all[n >= min_locs]
+    # clean species vector
+    species <- species_all[n >= min_locs]
+
+
+  # convert to spatial data frames
+ # to utm for easy analyses
+      ldf_utm <- lapply(ldf, atlas_make_spatialdataframe)
+      # to osm for easy plotting
+      ldf_osm <- lapply(ldf_utm, sp::spTransform, OpenStreetMap::osm())
+
+  # get bounding box from utm tracking data
+      # for each track
+      # bbox_utm<-lapply(ldf_utm, atl_get_spatial_bounds)
+      # # get extent of bounding box between tracks
+      # xrange<-range(unlist(lapply(bbox_utm, `[`,,1)))
+      # yrange<-range(unlist(lapply(bbox_utm, `[`,,2)))
+      # bbox_utm<-matrix(cbind(xrange, yrange), nrow = 2, byrow = FALSE,
+      #     dimnames = list(c("min", "max"), c("X", "Y")))
+
+  #> Transform the bounding box to the osm coordinate reference system
+  #> for plotting with OpenStreetMap
+      # bbox_osm <- atlas_make_boundingbox_for_osm(
+      #                         bbox_utm,
+      #                         buffer=1000,
+      #                         from_crs= sp::CRS("+init=epsg:32631")
+      #                         )
+  bbox_osm <- rbind(c(53.305, 5.11), c(53.228, 5.33))
+  # Download the map from OpenStreetMap using the bounding box
+    map <- OpenStreetMap::openmap(
+              upperLeft = bbox_osm[1, ],
+              lowerRight = bbox_osm[2, ],
+              type="osm") # bing for satilate map, osm for schematic map
+
+  #> create colours for different individuals
+  if (length(unique(species)) == 1) { # colour by individual
+          COL <- rainbow(length(ldf_osm))
+          spec <- NULL
+      }else{  #> or colour by species
+          spec <- as.data.frame(unique(species))
+          names(spec) <- "species"
+          #> create colours for the different species
+            # Assign specific colors to each species
+        spec$COL[spec$species == "oystercatcher"] <- "#1f1f1f"
+        spec$COL[spec$species == "spoonbill"] <- "#FFFFFF"
+        spec$COL[spec$species == "common tern"] <- "#FFFFFF"
+        spec$COL[spec$species == "islandica"] <- "#D10312"
+        spec$COL[spec$species == "canutus"] <- "#DD571C"
+        spec$COL[spec$species == "bar-tailed godwit"] <- "#ffb318"
+        spec$COL[spec$species == "redshank"] <- "#FFFF00"
+        spec$COL[spec$species == "curlew"] <- "#AA00FF"
+        spec$COL[spec$species == "grey plover"] <- "#CCCCCC"
+        spec$COL[spec$species == "turnstone"] <- "#996600"
+        spec$COL[spec$species == "dunlin"] <- "#B3FC38"
+        spec$COL[spec$species == "sanderling"] <- "#33CCCC"
+        spec$COL[spec$species == "pond bat"] <- "dark grey"
+        spec$COL[spec$species == "avocet"] <- "grey20"
+        spec$COL[spec$species == "kentish plover"] <- "#FF7F00"
+        spec$COL[spec$species == "test tag"] <- "magenta"
+        COL <- spec$COL[match(species, spec$species)]
+                    }
+
+   ###########
+   ## make video of data
+   #############
+      
+   # get bBox
+       #Bbox<-rbind(c(53.31, 5.11), c(53.27, 5.17))# Richel
+   		Bbox <- rbind(c(53.305, 5.11), c(53.228, 5.33))#Richel+Griend
+   	## specify parameters
+   	# Dt=7	#in seconds
+   	 Dt <- 15	#in seconds
+   	# Dt=30	#in seconds
+   	# Dt=60		#in seconds #
+   	# Dt=120	#in seconds #
+   	# Dt=300	#in seconds #
+   	# Dt=600	#in seconds # voor ademen getij: 600
+   	# SavE=TRUE
+   	path="track_videos"
+   	Name=paste("watlas_track_video",
+   	           format(with_tz(start, tzone="UTC"), "%Y-%m-%d_%H-%M-%S"),
+   	           sep="-")
+   	TMP_PNGs <- FALSE
+   	Trail <- 10	
+   	Frames_s <-10	
+   	Past_Lines <-	FALSE
+   	# Past_Lines <- TRUE
+   	 BBox <- Bbox
+   	# BBox <- NULL	#estimate bbox from data
+   	MAP <- map
+  	## MAP=NULL	#load map from bbox
+   	species_col <- spec # data frame with colour per species for legend
+   	# PLOT_LEGEND_IDs<-TRUE	#plot IDs in legend
+   	PLOT_LEGEND_IDs <- FALSE
+   		if(!is.null(species_col))PLOT_LEGEND_IDs=TRUE
+   	LEGEND <-"topleft"
+   	SCALE <- 1	# multiplier for pixel width&height
+  	SCALE_LEGEND_LINE <- 0.8	# scales distance between lines
+   	SCALE_LEGEND_TXT <- 1.5 #1.4	# scales text in legend
+   	SCALE_LEGEND_CEX <- 1.8	# gootte van stippen in legend
+   	SCALE_BAR <- 1.5	# tekstgrootte scalebar
+   	SCALE_DT <- 1.5	# tekstgootte datetime stamp
+   	SCALE_DIST <- 5000	# scale bar distance in m
+   	Water <- NULL	## supress plotting water levels
+   	#Water <- WATER	## plot water levels
+   	towers <- NULL # don't plot towers or towers=TOWERS to plot
+
+   	## create video
+
+   	## using memory (not PNG)
+   		video_tracks(ldf_osm, dt=Dt, trail=Trail, IDs=tag_list_all, PAST_LINES=Past_Lines, MAP=MAP,frames_s=Frames_s, ppi=96, Save=TRUE, pad=path,	name=Name, tg_cols=COL, species=species_col, LEGEND=LEGEND, plot_LEGEND_IDs=PLOT_LEGEND_IDs, legend_line=SCALE_LEGEND_LINE, legend_cex=SCALE_LEGEND_CEX, legend_text=SCALE_LEGEND_TXT, bbox=BBox, Scale=SCALE, SCALE_DIST=SCALE_DIST, scale_bar=SCALE_BAR, scale_dt=SCALE_DT, codec="libx264", towers=towers, water=Water, tmp_PNGs=FALSE)
+
+ }
+
+
+```
+
+
+
