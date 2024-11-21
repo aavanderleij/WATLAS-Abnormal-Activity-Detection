@@ -1,4 +1,4 @@
-name: watlas_disturbance
+name: WAAD
 channels:
   - conda-forge
   - nvidia
