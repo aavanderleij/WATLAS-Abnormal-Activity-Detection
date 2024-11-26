@@ -1,9 +1,10 @@
 """
-This class create an object with WATLAS tracking data and calculates varius other values based on this data.
+This class create an dataframe with WATLAS tracking data and calculates varius other values based on this data.
+It contains functions to process WATLAS data for use in the abnormal activity model.
 
 WATLAS is project from NIOZ, the Royal Netherlands Institute for Sea Research.
 
-For technical specifications or other information, please contact Allert Bijleveld (allert.bijleveld@nioz.nl)
+For access to the WATLAS data or other information, please contact Dr Allert Bijleveld (allert.bijleveld@nioz.nl)
 
 author: Antsje van der Leij (https://github.com/aavanderleij)
 """
@@ -25,12 +26,19 @@ class WatlasDataframe:
     Class for retrieving and processing WATLAS data.
     """
 
-    def __init__(self, watlas_df=None, tags_df=None, config_file="config/config_with_data.ini"):
+    def __init__(self, config_file, watlas_df=None, tags_df=None):
+        """
+        Read config file at creation of class WatlasDataframe
+        Args:
+            config_file (str): path to config file:
+            watlas_df pl.Dataframe: Dataframe with WATLAS tracking data
+        """
 
+        # check config file
         try:
             self.config = configparser.ConfigParser()
             self.config.read(config_file)
-        except configparser.Error as e:
+        except configparser.Error:
             print(sys.exit(f"could not open config file: {config_file}"))
 
         self.start_time = self.config['timeframe']['start_time']
@@ -51,7 +59,6 @@ class WatlasDataframe:
         self.species_list = ["islandica", "oystercatcher", "spoonbill", "bar-tailed_godwit", "redshank", "sanderling",
                              "dunlin", "turnstone", "curlew", "gray_plover"]
 
-    # TODO add remote database access
 
     def get_db_uri(self):
         """
@@ -392,14 +399,13 @@ class WatlasDataframe:
             end_time (str): end time for data fetching
             tag_file (str): tag csv file path:
         """
-        print("in process_for_prediction")
+        print("Processing data for prediction")
 
+        # get tag data from csv in config file
         self.get_tag_data()
 
         # get data from sqlite file
-        all_tags = self.get_all_tags()
-        # self.get_watlas_data_sqlite(all_tags)
-        self.get_watlas_data(all_tags)
+        self.get_watlas_data(self.get_all_tags())
 
         # filter minimum localisations
         self.filter_num_localisations()
@@ -418,6 +424,7 @@ class WatlasDataframe:
 
         # process dataframe per timestamp to get group metrics
         self.process_per_timestamp()
+
         self.shift_rows_for_time_window()
 
         # # sort by time
@@ -685,12 +692,6 @@ def get_group_metrics(watlas_df, group_area, species_list):
         median_speeds.append(speed_median)
         std_speeds.append(speed_std)
 
-        # print(f"Distances for row {i}: {distances}")
-        # print(f"mean distance: {mean}")
-        # print(f"Mask for row {i}: {mask}")
-        # print(f"Group for row {i}: {group}")
-        # print(f"Number of species for row {i}: {n_species[i]}")
-
     watlas_df = watlas_df.with_columns(
         pl.Series("mean_dist_group", mean_distances),
         pl.Series("median_dist_group", median_distances),
@@ -712,7 +713,49 @@ def get_group_metrics(watlas_df, group_area, species_list):
 
     return watlas_df
 
+def speed_test():
+    """
+    short function to compate the processing time of pytools4watlas with tools4watlas
 
+    Returns:
+
+    """
+    # time process
+    start = timeit.default_timer()
+    watlas_df = WatlasDataframe("config/config_with_data.ini")
+
+    # get tag data from csv in config file
+    watlas_df.get_tag_data()
+
+    tag_time = timeit.default_timer()
+
+    # get data from sqlite file
+    watlas_df.get_watlas_data(watlas_df.get_all_tags())
+
+    get_data_time = timeit.default_timer()
+
+    # filter minimum localisations
+    watlas_df.filter_num_localisations()
+    # add species column
+    watlas_df.get_species()
+
+    filter_time = timeit.default_timer()
+
+    # aggregate data
+    watlas_df.aggregate_dataframe()
+
+    aggregate_time = timeit.default_timer()
+
+    # remove species not in species list (things like pond bats, test tags, etc)
+    watlas_df.watlas_df = watlas_df.watlas_df.filter(pl.col("species").is_in(watlas_df.species_list))
+
+    # do smoothing and calculations that have to be done per tag
+    watlas_df.process_per_tag()
+
+    # watlas_df.process_for_prediction()
+
+    stop = timeit.default_timer()
+    print('Time: ', stop - start)
 
 
 def main():
@@ -723,11 +766,41 @@ def main():
     """
     # time process
     start = timeit.default_timer()
-    watlas_df = WatlasDataframe()
+    watlas_df = WatlasDataframe("config/config_with_data.ini")
 
-    watlas_df.process_for_prediction()
+    # get tag data from csv in config file
+    watlas_df.get_tag_data()
 
-    # match_labels("C:/Users/avanderleij/OneDrive - NIOZ/Bureaublad/WATLAS_disturbance/track_videos/tag_labeling_videos/2023-08-28 17-09-15/2023-08-23_17-04-00/watlas_preprediction.csv", "C:/Users/avanderleij/OneDrive - NIOZ/Bureaublad/WATLAS_disturbance/track_videos/tag_labeling_videos/2023-08-28 17-09-15/2023-08-28 17-09-15_labeld.csv")
+    tag_time = timeit.default_timer()
+
+    # get data from sqlite file
+    watlas_df.get_watlas_data(watlas_df.get_all_tags())
+
+    get_data_time = timeit.default_timer()
+
+    # filter minimum localisations
+    watlas_df.filter_num_localisations()
+    # add species column
+    watlas_df.get_species()
+
+    filter_time = timeit.default_timer()
+
+    # aggregate data
+    watlas_df.aggregate_dataframe()
+
+    aggregate_time = timeit.default_timer()
+
+
+
+    # remove species not in species list (things like pond bats, test tags, etc)
+    watlas_df.watlas_df = watlas_df.watlas_df.filter(pl.col("species").is_in(watlas_df.species_list))
+
+    # do smoothing and calculations that have to be done per tag
+    watlas_df.process_per_tag()
+
+
+
+    # watlas_df.process_for_prediction()
 
 
     stop = timeit.default_timer()
