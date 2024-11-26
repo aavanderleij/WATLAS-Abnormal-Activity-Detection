@@ -21,13 +21,36 @@ library(readxl)
 library(lubridate)
 library(dplyr)
 library(ggplot2)
+library(timeDate)
 
 ```
 
 
-``` {r get data from local SQLite file}
-run_time_start <- Sys.time()
+
+``` {r tag processing}
+
+run_time_start <- Sys.timeDate()
 tag_df<-as.data.frame(readxl::read_excel("../data/watlas_data/tags_watlas_all.xlsx"))
+
+tag_df <- tag_df[!is.na(tag_df$species),]
+tag_list_all <- tag_df$tag
+
+#> specify format of tag numbers
+tag_list_all<-stringr::str_pad(
+                    as.character(tag_list_all),
+                    4, #> WATLAS tag string is four characters
+                    pad = "0"
+                    )
+tag_list_all <- tag_list_all[!is.na(tag_list_all)]
+# for collecting data from server, long tag format is used
+server_tag_list_all<-paste0("3100100", tag_list_all)
+
+#> depending on the tag selection, the species need to be taken from the metadata
+tag_idx<-match(tag_list_all, tag_df$tag)
+species_all<-tag_df$species[tag_idx]
+
+
+
 
 # get SQLite file
 SQLiteDB=paste0("../data/SQLite/",
@@ -42,12 +65,12 @@ MyDBconnection <- RSQLite::dbConnect(RSQLite::SQLite(),SQLiteDB)
 # start <- format(with_tz("2023-08-21 09:20:00" , tzone="UTC"), "%Y-%m-%d %H:%M:%S")
 # end <- format(with_tz("2023-08-21 10:20:00", tzone="UTC"), "%Y-%m-%d %H:%M:%S")
 
-start <- format("2023-08-01 00:00:00")
-end <- format("2023-08-21 00:00:00")
+start <- format("2023-08-21 09:00:00")
+end <- format("2023-08-21 11:00:00")
 
 # get data from SQLite file
 raw_ldf <- atl_get_data(
-  31001003001,
+  3001,
   tracking_time_start=start,
   tracking_time_end=end,
   timezone = "UTC",
@@ -55,68 +78,87 @@ raw_ldf <- atl_get_data(
   use_connection = MyDBconnection
 )
 
-raw_ldf$speed <- atl_get_speed(raw_ldf)
-raw_ldf$angle <- atl_turning_angle(raw_ldf)
+time_database_search <- Sys.timeDate()
 
-thinned_data <- atl_thin_data(raw_ldf,
-  interval = 15,
-  id_columns = c("TAG"),
-  method = "aggregate"
-)
 
-smooth_df <- atl_median_smooth(raw_ldf)
-run_time_end <- Sys.time()
+```
 
-database_time <- run_time_end - run_time_start
+```{r}
+#filter list for minimum number of localizations per bird
+min_locs <- 10                   # specify minimum
+ldf_n <- lapply(ldf_raw, nrow) # count localizations per bird
+ldf_n[lengths(ldf_n) == 0] <- 0 # replace NULL counts for 0
+n <- unlist(ldf_n)              # create vector of counts
+ldf <- ldf_raw[n>=min_locs]# filter number of localizations
+tag_list <- tag_list_all[n>=min_locs]       # clean tag vector
+species<-species_all[n>=min_locs]   # clean species vector
 
-# get data from SQLite file
-raw_ldf <- atl_get_data(
-  31001003002,
-  tracking_time_start=start,
-  tracking_time_end=end,
-  timezone = "UTC",
-  SQLiteDB = SQLiteDB,
-  use_connection = MyDBconnection
-)
+ldf_thinned <- lapply(
+                          ldf,
+                          atl_thin_data,
+                          interval = 15,
+                          id_columns = c("tag"),
+                          method="aggregate"
+                          )
 
-speed <- atl_get_speed(raw_ldf)
-angle <- atl_turning_angle(raw_ldf)
+med_filter <- 5 # number of localizations within window for smoothing
+ldf_smoothed <- lapply(
+                    ldf_thinned,
+                    atl_median_smooth,
+                    time = "TIME",
+                    moving_window = med_filter
+                    )
 
-thinned_data <- atl_thin_data(raw_ldf,
-  interval = 15,
-  id_columns = c("TAG"),
-  method = "aggregate"
-)
+ldf_speed_in <- lapply(
+                  ldf_smoothed,
+                  atl_get_speed,
+                  time="TIME",
+                  type="in"
+                  )
 
-smooth_df <- atl_median_smooth(raw_ldf)
-run_time_end <- Sys.time()
+    ldf_speed_out <- lapply(
+                  ldf_smoothed,
+                  atl_get_speed,
+                  time="TIME",
+                  type="out"
+                  )
+    # add speed_in to the ldf data
+    for(i in seq_along(ldf_speed_in)){
+      ldf_smoothed[[i]]$speed_in <- ldf_speed_in[[i]]
+      ldf_smoothed[[i]]$speed_out <- ldf_speed_out[[i]]
+    }
 
-database_time <- run_time_end - run_time_start
-# get data from SQLite file
-raw_ldf <- atl_get_data(
-  31001003016,
-  tracking_time_start=start,
-  tracking_time_end=end,
-  timezone = "UTC",
-  SQLiteDB = SQLiteDB,
-  use_connection = MyDBconnection
-)
 
-speed <- atl_get_speed(raw_ldf)
-angle <- atl_turning_angle(raw_ldf)
 
-thinned_data <- atl_thin_data(raw_ldf,
-  interval = 15,
-  id_columns = c("TAG"),
-  method = "aggregate"
-)
 
-smooth_df <- atl_median_smooth(raw_ldf)
-run_time_end <- Sys.time()
 
-database_time <- run_time_end - run_time_start
+# apply a median smoother
 
-print(database_time)
+
+# get turning angle
+ldf_angle <- lapply(
+                    ldf_smoothed,
+                    atl_turning_angle,
+                    time = "TIME",
+                    )
+
+    # add angle to the ldf data
+    for(i in seq_along(ldf_angle)){
+      ldf[[i]]$angle <- ldf_angle[[i]]
+    }
+run_time_end <- Sys.timeDate()
+
+```
+
+```{r time calculate}
+
+tag_pros_time <- run_time_start - time_tag_processing
+
+database_time <- time_tag_processing - time_database_search
+
+time <- run_time_start - run_time_end
+
+time
 
 ```
 
