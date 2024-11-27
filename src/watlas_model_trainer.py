@@ -21,6 +21,7 @@ from sklearn.preprocessing import StandardScaler
 mpl.rcParams['figure.figsize'] = (12, 10)
 colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
+
 class ModelSetup:
 
     def __init__(self):
@@ -266,7 +267,7 @@ class ModelSetup:
             encoded_features.append(bool_col)
 
         return all_inputs, encoded_features
-    
+
     def encode_non_num_features(self, dataset):
         """
         Encode features based on type of value (catagorical or numarical).
@@ -310,10 +311,16 @@ class ModelSetup:
         return all_inputs, encoded_features
 
     def early_stopping(self):
+        """
+        Early_stopping layer of tensorflow
+        Because of the imbalanced data set the validation precision recall curve is taken as monitor value
+        Returns: tf.keras.callbacks.EarlyStopping
+
+        """
         return tf.keras.callbacks.EarlyStopping(
             monitor='val_prc',
             verbose=1,
-            patience=10,
+            patience=20,
             mode='max',
             restore_best_weights=True)
 
@@ -336,11 +343,11 @@ class ModelSetup:
         # dropout layer
         x = tf.keras.layers.Dropout(0.2)(x)
         # dense layer
-        x = tf.keras.layers.Dense(32, activation="relu")(all_features)
+        x = tf.keras.layers.Dense(32, activation="relu")(x)
         # dropout layer
         x = tf.keras.layers.Dropout(0.2)(x)
         # dense layer
-        x = tf.keras.layers.Dense(12, activation="relu")(all_features)
+        x = tf.keras.layers.Dense(12, activation="relu")(x)
         # dropout layer
         x = tf.keras.layers.Dropout(0.2)(x)
         # output layer
@@ -356,7 +363,7 @@ class ModelSetup:
                       run_eagerly=True)
         return model
 
-    def create_model_no_normal(self, encoded_features, all_inputs):
+    def create_model_2(self, encoded_features, all_inputs):
         """
         creates a compiled model
 
@@ -373,13 +380,9 @@ class ModelSetup:
         # dense layer
         x = tf.keras.layers.Dense(64, activation="relu")(all_features)
         # dropout layer
-        x = tf.keras.layers.Dropout(0.2)(x)
+        x = tf.keras.layers.Dropout(0.5)(x)
         # dense layer
-        x = tf.keras.layers.Dense(32, activation="relu")(all_features)
-        # dropout layer
-        x = tf.keras.layers.Dropout(0.2)(x)
-        # dense layer
-        x = tf.keras.layers.Dense(12, activation="relu")(all_features)
+        x = tf.keras.layers.Dense(12, activation="relu")(x)
         # dropout layer
         x = tf.keras.layers.Dropout(0.2)(x)
         # output layer
@@ -395,8 +398,50 @@ class ModelSetup:
                       run_eagerly=True)
         return model
 
+    def create_model_3(self, encoded_features, all_inputs):
+        """
+        creates a compiled model
+
+        Args:
+            encoded_features (list): A list with encoded features
+            all_inputs (dict): A dictionary of input tensors for eacht feature, key is feature name, value is
+             corresponding tensor.
+
+        Returns:
+
+        """
+        # Concat all features into single tensor
+        all_features = tf.keras.layers.concatenate(encoded_features)
+        # dense layer
+        x = tf.keras.layers.Dense(64, activation="relu")(all_features)
+        # dropout layer
+        x = tf.keras.layers.Dropout(0.5)(x)
+        # dense layer
+        x = tf.keras.layers.Dense(12, activation="relu")(x)
+        # dropout layer
+        x = tf.keras.layers.Dropout(0.2)(x)
+        # output layer
+        output = tf.keras.layers.Dense(1, activation="sigmoid")(x)
+
+        # create model
+        model = tf.keras.Model(all_inputs, output)
+
+        # compile model
+        model.compile(optimizer='adam',
+                      loss=tf.keras.losses.BinaryCrossentropy(from_logits=False),
+                      metrics=self.metrics,
+                      run_eagerly=True)
+        return model
 
     def plot_metrics(self, history, save_name):
+        """
+        Plot metrics of model
+
+        Args:
+            history: training history of model
+            save_name (str): the name that the plot will be saved under.
+        """
+
         metrics = ['loss', 'prc', 'precision', 'recall']
         for n, metric in enumerate(metrics):
             name = metric.replace("_", " ").capitalize()
@@ -417,7 +462,6 @@ class ModelSetup:
         plt.savefig(save_name)
         plt.show()
 
-
     def plot_loss(self, history, other_history, label, other_label, n, n_2):
         # Use a log scale on y-axis to show the wide range of values.
         plt.semilogy(history.epoch, history.history['loss'],
@@ -434,9 +478,8 @@ class ModelSetup:
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
         plt.legend()
-        plt.savefig("New_dataset_compare")
+        plt.savefig("Last_dataset_compare")
         plt.show()
-
 
     def train_model(self):
         print("loading data...")
@@ -453,10 +496,12 @@ class ModelSetup:
         print("encode features")
         all_inputs, encoded_features = self.encode_features(train_set)
         print("compile model")
-        zero_model = self.create_model_no_normal(encoded_features, all_inputs)
-        zero_model.save_weights('/checkpoints/inital_weights')
+        model_2 = self.create_model_2(encoded_features, all_inputs)
+        # model_2.save_weights('/checkpoints/inital_weights')
         ml_model = self.create_model(encoded_features, all_inputs)
-        ml_model.load_weights('/checkpoints/inital_weights')
+        # ml_model.load_weights('/checkpoints/inital_weights')
+
+        model_3 = self.create_model_3(encoded_features, all_inputs)
 
         print("fit model")
         history = ml_model.fit(train_set,
@@ -464,25 +509,39 @@ class ModelSetup:
                                callbacks=[self.early_stopping()],
                                validation_data=val_set,
                                class_weight=class_weight)
+        self.plot_metrics(history, "Normal_model")
 
-        zero_bias_history = zero_model.fit(train_set,
-                                epochs=200,
-                                callbacks=[self.early_stopping()],
-                                validation_data=val_set,
-                                class_weight=class_weight)
 
-        self.plot_metrics(history, "encoded_new_data")
-        self.plot_metrics(zero_bias_history, "not_encoded_new_data")
+        shallow_model_history = model_2.fit(train_set,
+                                           epochs=200,
+                                           callbacks=[self.early_stopping()],
+                                           validation_data=val_set,
+                                           class_weight=class_weight)
 
-        self.plot_loss(history, zero_bias_history, "carefull bias",  "zero bias", 0, 1)
+        self.plot_metrics(shallow_model_history, "Shallow_model")
+
+        very_shallow_model_history = model_3.fit(train_set,
+                                           epochs=200,
+                                           callbacks=[self.early_stopping()],
+                                           validation_data=val_set,
+                                           class_weight=class_weight)
+
+        self.plot_metrics(very_shallow_model_history, "very_shallow_model")
+
+        self.plot_loss(history, shallow_model_history, "Model_1", "Model_2", 0, 1)
 
         # print(ml_model.summary())
 
-        ml_model.save("test_model_v2", save_format="tf")
+        ml_model.save("testing_model_1", save_format="tf")
+        model_2.save("testing_model_2", save_format="tf")
+        model_3.save("testing_model_3", save_format="tf")
         print("get result")
         result = ml_model.evaluate(test_set, return_dict=True)
+        result_2 = ml_model.evaluate(test_set, return_dict=True)
+        result_3 = ml_model.evaluate(test_set, return_dict=True)
 
-        return result
+
+        return result, result_2, result_3
 
     def test_tensorflow_install(self):
         """"
@@ -494,27 +553,10 @@ class ModelSetup:
 def main():
     ms = ModelSetup()
 
-    result = ms.train_model()
-    # print(result)
-
-    loaded_model = tf.keras.models.load_model("Wrong_model")
-
-    train_data_df = pd.read_csv("watlas_all.csv")
-    # drop columns not used for training
-    train_data_df = train_data_df.drop(columns=ms.columns_to_drop)
-
-    df = {key: value.to_numpy()[:, tf.newaxis] for key, value in train_data_df.items()}
-
-    results = loaded_model.predict(df)
-
-    print(train_data_df.shape[0])
-    print(len(results))
-    print("probabilities:")
-    print(results)
-    train_data_df['probability'] = results
-    train_data_df['prediction'] = tf.cast(results >= 0.5, tf.int32).numpy()
-
-    train_data_df.to_csv("predictions_example.csv")
+    result, result_2, result_3 = ms.train_model()
+    print(result)
+    print(result_2)
+    print(result_3)
 
 
 if __name__ == "__main__":
