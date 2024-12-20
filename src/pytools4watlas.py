@@ -59,7 +59,6 @@ class WatlasDataframe:
         self.species_list = ["islandica", "oystercatcher", "spoonbill", "bar-tailed_godwit", "redshank", "sanderling",
                              "dunlin", "turnstone", "curlew", "gray_plover"]
 
-
     def get_db_uri(self):
         """
         Get the watlas database URI based on the settings in the config file.
@@ -442,8 +441,6 @@ class WatlasDataframe:
         print(os.path.abspath(prediction_data_save_path))
 
 
-
-
 def smooth_data(watlas_df, moving_window=5):
     """
     Applies a median smooth defined by a rolling window to the X and Y
@@ -560,6 +557,7 @@ def get_turn_angle(watlas_df):
     watlas_df = watlas_df.with_columns(pl.Series(angle).alias("turn_angle"))
 
     return watlas_df
+
 
 def count_species(watlas_df, species_list):
     """
@@ -713,6 +711,7 @@ def get_group_metrics(watlas_df, group_area, species_list):
 
     return watlas_df
 
+
 def speed_test():
     """
     short function to compate the processing time of pytools4watlas with tools4watlas
@@ -755,6 +754,8 @@ def speed_test():
     # watlas_df.process_for_prediction()
 
     stop = timeit.default_timer()
+
+    print(watlas_df.watlas_df.head())
     print('Time: ', stop - start)
 
 
@@ -771,26 +772,16 @@ def main():
     # get tag data from csv in config file
     watlas_df.get_tag_data()
 
-    tag_time = timeit.default_timer()
-
     # get data from sqlite file
     watlas_df.get_watlas_data(watlas_df.get_all_tags())
-
-    get_data_time = timeit.default_timer()
 
     # filter minimum localisations
     watlas_df.filter_num_localisations()
     # add species column
     watlas_df.get_species()
 
-    filter_time = timeit.default_timer()
-
     # aggregate data
     watlas_df.aggregate_dataframe()
-
-    aggregate_time = timeit.default_timer()
-
-
 
     # remove species not in species list (things like pond bats, test tags, etc)
     watlas_df.watlas_df = watlas_df.watlas_df.filter(pl.col("species").is_in(watlas_df.species_list))
@@ -798,13 +789,11 @@ def main():
     # do smoothing and calculations that have to be done per tag
     watlas_df.process_per_tag()
 
-
-
     # watlas_df.process_for_prediction()
-
 
     stop = timeit.default_timer()
     print('Time: ', stop - start)
+    print(watlas_df.watlas_df.head())
 
 
 if __name__ == '__main__':

@@ -6,7 +6,7 @@ from pathlib import Path
 import tensorflow as tf
 import pandas as pd
 import configparser
-
+from tensorflow.keras.utils import plot_model
 
 class WatlasPredictor:
 
@@ -27,7 +27,9 @@ class WatlasPredictor:
 
         self.result_dir = self.result_dir / str(self.start_time).replace(":", "-").replace(" ", "_")
 
-        loaded_model = tf.keras.models.load_model("models/disturbance_model")
+        loaded_model = tf.keras.models.load_model(self.config["Model parameters"]["path_to_model"])
+
+        print(loaded_model.summary())
 
         input_df = pd.read_csv(Path(self.result_dir) / "watlas_preprediction.csv")
 
@@ -51,6 +53,8 @@ class WatlasPredictor:
         input_dict = {key: value.to_numpy()[:, tf.newaxis] for key, value in predict_data_df.items()}
         # predict
         results = loaded_model.predict(input_dict)
+        loaded_model.summary()
+        plot_model(loaded_model,to_file="model_graph.png", show_shapes=True, show_layer_names=True)
 
         results_dataframe = input_df.assign(predicted=results)
 
@@ -75,6 +79,7 @@ class WatlasPredictor:
 def main():
     config_file = sys.argv[1]
     WatlasPredictor(config_file)
+
 
 
 if __name__ == "__main__":

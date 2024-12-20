@@ -98,7 +98,7 @@ while (current_time <= end_time) {
   # print times
   print(start)
   print(end)
-  
+
   # get data
   ldf_raw <- lapply(
     server_tag_list_all,
@@ -109,7 +109,7 @@ while (current_time <= end_time) {
     sqlite_db = sqlite_db,
     use_connection = my_db_connection
   )
-  
+
   # get remote data
   # ldf_raw<- lapply(
   #               server_tag_list_all,
@@ -147,7 +147,7 @@ while (current_time <= end_time) {
 
   # filter  for minimum number of localizations per bird
   # specify minimum
-    min_locs <- 2
+  min_locs <- 2
     # count localizations per bird
     ldf_n <- lapply(ldf_smoothed, nrow)
     # replace NULL counts for 0
@@ -163,10 +163,10 @@ while (current_time <= end_time) {
 
 
   # convert to spatial data frames
- # to utm for easy analyses
-      ldf_utm <- lapply(ldf, atlas_make_spatialdataframe)
-      # to osm for easy plotting
-      ldf_osm <- lapply(ldf_utm, sp::spTransform, OpenStreetMap::osm())
+  # to utm for easy analyses
+  ldf_utm <- lapply(ldf, atlas_make_spatialdataframe)
+  # to osm for easy plotting
+  ldf_osm <- lapply(ldf_utm, sp::spTransform, OpenStreetMap::osm())
 
   # get bounding box from utm tracking data
       # for each track
@@ -186,10 +186,11 @@ while (current_time <= end_time) {
       #                         )
   bbox_osm <- rbind(c(53.305, 5.11), c(53.228, 5.33))
   # Download the map from OpenStreetMap using the bounding box
-    map <- OpenStreetMap::openmap(
-              upperLeft = bbox_osm[1, ],
-              lowerRight = bbox_osm[2, ],
-              type="osm") # bing for satilate map, osm for schematic map
+  map <- OpenStreetMap::openmap(
+                                upperLeft = bbox_osm[1, ],
+                                lowerRight = bbox_osm[2, ],
+                                type = "osm") 
+                                # bing for satilate map, osm for schematic map
 
   #> create colours for different individuals
   if (length(unique(species)) == 1) { # colour by individual
@@ -222,7 +223,7 @@ while (current_time <= end_time) {
    ###########
    ## make video of data
    #############
-      
+
    # get bBox
        #Bbox<-rbind(c(53.31, 5.11), c(53.27, 5.17))# Richel
    		Bbox <- rbind(c(53.305, 5.11), c(53.228, 5.33))#Richel+Griend

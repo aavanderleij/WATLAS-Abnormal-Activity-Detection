@@ -9,24 +9,62 @@ import pandas as pd
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
-import seaborn as sns
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-import sklearn
-from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 
 mpl.rcParams['figure.figsize'] = (12, 10)
 colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
 
-class ModelSetup:
+def test_tensorflow_install():
+    """
+    Test if tensorflow is installed correctly
+    """
+    print(tf.reduce_sum(tf.random.normal([1000, 1000])))
+
+
+def compare_loss(history, history_2, label, label_2, save_name):
+    """
+    plot the loss of 2 models for comparison
+    Args:
+        history (tf.keras.callbacks.History): training history of model
+        history_2 (tf.keras.callbacks.History): training history of model to compare
+        label (str): legend label for history
+        label_2 (str): legend label for history_2
+        save_name (str): the name that the plot will be saved under.
+    """
+    # Use a log scale on y-axis to show the wide range of values.
+    plt.semilogy(history.epoch, history.history['loss'],
+                 color=colors[0], label='Train ' + label)
+    plt.semilogy(history.epoch, history.history['val_loss'],
+                 color=colors[0], label='Val ' + label,
+                 linestyle='--')
+
+    plt.semilogy(history_2.epoch, history_2.history['loss'],
+                 color=colors[1], label='Train ' + label_2)
+    plt.semilogy(history_2.epoch, history_2.history['val_loss'],
+                 color=colors[1], label='Val ' + label_2,
+                 linestyle='--')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.savefig(save_name)
+
+
+class ModelTrainer:
+    """
+    Class for training and evaluating neural network model
+    """
 
     def __init__(self):
+        """
+        init for ModelTrainer
+        """
 
         # columns by type
+        self.output_bias = None
         self.columns_to_drop = ['TAG', 'time', 'X', 'Y', 'TIME', 'tag', 'X_raw', 'Y_raw']
         self.numerical_columns = ['NBS', 'VARX', 'VARY', 'distance', 'speed_in', 'speed_out', 'turn_angle',
                                   'mean_dist_group', 'median_dist_group', 'std_dist_group', 'group_size',
@@ -40,11 +78,11 @@ class ModelSetup:
                                   'mean_turn_angle_group_3', 'mean_dist_group_3', 'mean_speed_group_3', 'speed_in_4',
                                   'speed_out_4', 'distance_4', 'turn_angle_4', 'group_size_4',
                                   'mean_turn_angle_group_4', 'mean_dist_group_4', 'mean_speed_group_4', 'waterlevel']
-        self.categorical_sting_columns = ["species"]
+        self.categorical_sting_columns = ['species']
         self.categorical_bool_columns = ['islandica_in_group', 'oystercatcher_in_group', 'spoonbill_in_group',
                                          'bar-tailed_godwit_in_group', 'redshank_in_group', 'sanderling_in_group',
                                          'dunlin_in_group', 'turnstone_in_group', 'curlew_in_group',
-                                         "gray_plover_in_group"]
+                                         'gray_plover_in_group']
 
         self.metrics = [
             keras.metrics.BinaryCrossentropy(name='cross entropy'),
@@ -60,7 +98,7 @@ class ModelSetup:
             keras.metrics.AUC(name='prc', curve='PR'),
         ]
 
-    def load_train_data(self, path_to_traindata="training_data_v6.csv"):
+    def load_train_data(self, path_to_traindata):
         """
         Read training data from csv file and load it into a pandas dataframe.
         Args:
@@ -71,9 +109,7 @@ class ModelSetup:
 
         """
         # read csv file
-        # TODO check columns
         train_data_df = pd.read_csv(path_to_traindata)
-        # TODO keep an eye on parameters
         # drop columns not used for training
         train_data_df = train_data_df.drop(columns=self.columns_to_drop)
 
@@ -98,10 +134,10 @@ class ModelSetup:
         """
         neg, pos = np.bincount(dataframe['Alert'])
         total = neg + pos
-        print('Examples:\n    Total: {}\n    Positive: {} ({:.2f}% of total)\n'.format(
-            total, pos, 100 * pos / total))
+        print(f'Examples:\n    Total: {total}\n    Positive: {pos} ({100 * pos / total}% of total)\n')
 
-        weight_for_0 = (1 / neg) * (total / 2.0)
+        # set weights
+        weight_for_0 = 0.5
         weight_for_1 = (1 / pos) * (total / 2.0)
 
         class_weight = {0: weight_for_0, 1: weight_for_1}
@@ -110,8 +146,8 @@ class ModelSetup:
         initial_bias = np.log([pos / neg])
         self.output_bias = keras.initializers.Constant(initial_bias)
 
-        print('Weight for class 0: {:.2f}'.format(weight_for_0))
-        print('Weight for class 1: {:.2f}'.format(weight_for_1))
+        print(f'Weight for class 0: {weight_for_0:.2f}')
+        print(f'Weight for class 1: {weight_for_1:.2f}')
 
         # split training data into training data set, validation data set and a test data set
         train, test = train_test_split(dataframe, test_size=0.2)
@@ -119,10 +155,9 @@ class ModelSetup:
 
         neg, pos = np.bincount(test['Alert'])
         total = neg + pos
-        print('Examples test:\n    Total: {}\n    Positive: {} ({:.2f}% of total)\n'.format(
-            total, pos, 100 * pos / total))
+        print(f'Examples test:\n    Total: {total}\n    Positive: {pos} ({100 * pos / total:.2f}% of total)\n')
 
-        print(fr"Amount of data {total} ")
+        print(fr'Amount of data {total} ')
 
         # print amount of samples in each set
         print(len(train), 'training examples')
@@ -145,7 +180,7 @@ class ModelSetup:
         # make a copy if the dataframe
         df = dataframe.copy()
         # separate labels
-        labels = df.pop("Alert")
+        labels = df.pop('Alert')
         # make a dict with column name as key, value is numpy array and reshape the vector to an 1D array (n, 1)
         df = {key: value.to_numpy()[:, tf.newaxis] for key, value in dataframe.items()}
         # convert to dataset object
@@ -314,8 +349,8 @@ class ModelSetup:
         """
         Early_stopping layer of tensorflow
         Because of the imbalanced data set the validation precision recall curve is taken as monitor value
-        Returns: tf.keras.callbacks.EarlyStopping
 
+        Returns: tf.keras.callbacks.EarlyStopping
         """
         return tf.keras.callbacks.EarlyStopping(
             monitor='val_prc',
@@ -339,19 +374,15 @@ class ModelSetup:
         # Concat all features into single tensor
         all_features = tf.keras.layers.concatenate(encoded_features)
         # dense layer
-        x = tf.keras.layers.Dense(64, activation="relu")(all_features)
+        x = tf.keras.layers.Dense(64, activation='relu')(all_features)
         # dropout layer
         x = tf.keras.layers.Dropout(0.2)(x)
         # dense layer
-        x = tf.keras.layers.Dense(32, activation="relu")(x)
-        # dropout layer
-        x = tf.keras.layers.Dropout(0.2)(x)
-        # dense layer
-        x = tf.keras.layers.Dense(12, activation="relu")(x)
+        x = tf.keras.layers.Dense(12, activation='relu')(x)
         # dropout layer
         x = tf.keras.layers.Dropout(0.2)(x)
         # output layer
-        output = tf.keras.layers.Dense(1, activation="sigmoid", bias_initializer=self.output_bias)(x)
+        output = tf.keras.layers.Dense(1, activation='sigmoid', bias_initializer=self.output_bias)(x)
 
         # create model
         model = tf.keras.Model(all_inputs, output)
@@ -378,50 +409,15 @@ class ModelSetup:
         # Concat all features into single tensor
         all_features = tf.keras.layers.concatenate(encoded_features)
         # dense layer
-        x = tf.keras.layers.Dense(64, activation="relu")(all_features)
+        x = tf.keras.layers.Dense(64, activation='relu')(all_features)
         # dropout layer
         x = tf.keras.layers.Dropout(0.5)(x)
         # dense layer
-        x = tf.keras.layers.Dense(12, activation="relu")(x)
+        x = tf.keras.layers.Dense(12, activation='relu')(x)
         # dropout layer
         x = tf.keras.layers.Dropout(0.2)(x)
         # output layer
-        output = tf.keras.layers.Dense(1, activation="sigmoid")(x)
-
-        # create model
-        model = tf.keras.Model(all_inputs, output)
-
-        # compile model
-        model.compile(optimizer='adam',
-                      loss=tf.keras.losses.BinaryCrossentropy(from_logits=False),
-                      metrics=self.metrics,
-                      run_eagerly=True)
-        return model
-
-    def create_model_3(self, encoded_features, all_inputs):
-        """
-        creates a compiled model
-
-        Args:
-            encoded_features (list): A list with encoded features
-            all_inputs (dict): A dictionary of input tensors for eacht feature, key is feature name, value is
-             corresponding tensor.
-
-        Returns:
-
-        """
-        # Concat all features into single tensor
-        all_features = tf.keras.layers.concatenate(encoded_features)
-        # dense layer
-        x = tf.keras.layers.Dense(64, activation="relu")(all_features)
-        # dropout layer
-        x = tf.keras.layers.Dropout(0.5)(x)
-        # dense layer
-        x = tf.keras.layers.Dense(12, activation="relu")(x)
-        # dropout layer
-        x = tf.keras.layers.Dropout(0.2)(x)
-        # output layer
-        output = tf.keras.layers.Dense(1, activation="sigmoid")(x)
+        output = tf.keras.layers.Dense(1, activation='sigmoid')(x)
 
         # create model
         model = tf.keras.Model(all_inputs, output)
@@ -444,11 +440,11 @@ class ModelSetup:
 
         metrics = ['loss', 'prc', 'precision', 'recall']
         for n, metric in enumerate(metrics):
-            name = metric.replace("_", " ").capitalize()
+            name = metric.replace('_', ' ').capitalize()
             plt.subplot(2, 2, n + 1)
             plt.plot(history.epoch, history.history[metric], color=colors[0], label='Train')
             plt.plot(history.epoch, history.history['val_' + metric],
-                     color=colors[0], linestyle="--", label='Val')
+                     color=colors[0], linestyle='--', label='Val')
             plt.xlabel('Epoch')
             plt.ylabel(name)
             if metric == 'loss':
@@ -460,104 +456,84 @@ class ModelSetup:
 
             plt.legend()
         plt.savefig(save_name)
-        plt.show()
-
-    def plot_loss(self, history, other_history, label, other_label, n, n_2):
-        # Use a log scale on y-axis to show the wide range of values.
-        plt.semilogy(history.epoch, history.history['loss'],
-                     color=colors[n], label='Train ' + label)
-        plt.semilogy(history.epoch, history.history['val_loss'],
-                     color=colors[n], label='Val ' + label,
-                     linestyle="--")
-
-        plt.semilogy(other_history.epoch, other_history.history['loss'],
-                     color=colors[n_2], label='Train ' + other_label)
-        plt.semilogy(other_history.epoch, other_history.history['val_loss'],
-                     color=colors[n_2], label='Val ' + other_label,
-                     linestyle="--")
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.legend()
-        plt.savefig("Last_dataset_compare")
-        plt.show()
 
     def train_model(self):
-        print("loading data...")
-        train_data = self.load_train_data()
-        print("split data...")
+        """
+        train and evaluate model
+        
+        Returns:
+            test_set_evaluation (dict): dictionary of evaluation metrics of test set
+
+        """
+        print('loading data...')
+        train_data = self.load_train_data(path_to_traindata='training_data_v6.csv')
+        print('split data...')
         train, val, test, class_weight = self.split_data(train_data)
+        # transform to tenor dataset
         train_set = self.df_to_dataset(train, batch_size=25)
-        val_set = self.df_to_dataset(train, batch_size=25)
-        test_set = self.df_to_dataset(train, batch_size=25)
-        [(train_features, label_batch)] = train_set.take(1)
+        val_set = self.df_to_dataset(val, batch_size=25)
+        test_set = self.df_to_dataset(test, batch_size=25)
+        [(train_features, _)] = train_set.take(1)
 
         print('Every feature:', list(train_features.keys()))
 
-        print("encode features")
+        print('encode features')
         all_inputs, encoded_features = self.encode_features(train_set)
-        print("compile model")
-        model_2 = self.create_model_2(encoded_features, all_inputs)
-        # model_2.save_weights('/checkpoints/inital_weights')
+        print('compile model')
+
         ml_model = self.create_model(encoded_features, all_inputs)
-        # ml_model.load_weights('/checkpoints/inital_weights')
 
-        model_3 = self.create_model_3(encoded_features, all_inputs)
+        # for comparing models, save initial weights
+        # ml_model.save_weights('/checkpoints/inital_weights')
 
-        print("fit model")
+        print('fit model')
         history = ml_model.fit(train_set,
                                epochs=200,
                                callbacks=[self.early_stopping()],
                                validation_data=val_set,
                                class_weight=class_weight)
-        self.plot_metrics(history, "Normal_model")
 
+        ml_model.save('testing_model_1', save_format='tf')
 
-        shallow_model_history = model_2.fit(train_set,
-                                           epochs=200,
-                                           callbacks=[self.early_stopping()],
-                                           validation_data=val_set,
-                                           class_weight=class_weight)
+        self.plot_metrics(history, 'Normal_model')
 
-        self.plot_metrics(shallow_model_history, "Shallow_model")
+        print('get test_set_evaluation')
+        test_set_evaluation = ml_model.evaluate(test_set, return_dict=True)
 
-        very_shallow_model_history = model_3.fit(train_set,
-                                           epochs=200,
-                                           callbacks=[self.early_stopping()],
-                                           validation_data=val_set,
-                                           class_weight=class_weight)
+        # # train second model and compare
+        # model_2 = self.create_model_2(encoded_features, all_inputs)
+        # # model_2.load_weights('/checkpoints/inital_weights')
+        #
+        # shallow_model_history = model_2.fit(train_set,
+        #                                     epochs=200,
+        #                                     callbacks=[self.early_stopping()],
+        #                                     validation_data=val_set,
+        #                                     class_weight=class_weight)
+        #
+        # self.plot_metrics(shallow_model_history, 'Shallow_model')
+        #
+        # self.compare_loss(history, shallow_model_history, 'Model_1', 'Model_2', "comparison_loss")
+        #
+        # model_2.save('testing_model_2', save_format='tf')
+        #
+        # test_set_evaluation_2 = model_2.evaluate(test_set, return_dict=True)
 
-        self.plot_metrics(very_shallow_model_history, "very_shallow_model")
-
-        self.plot_loss(history, shallow_model_history, "Model_1", "Model_2", 0, 1)
-
-        # print(ml_model.summary())
-
-        ml_model.save("testing_model_1", save_format="tf")
-        model_2.save("testing_model_2", save_format="tf")
-        model_3.save("testing_model_3", save_format="tf")
-        print("get result")
-        result = ml_model.evaluate(test_set, return_dict=True)
-        result_2 = ml_model.evaluate(test_set, return_dict=True)
-        result_3 = ml_model.evaluate(test_set, return_dict=True)
-
-
-        return result, result_2, result_3
-
-    def test_tensorflow_install(self):
-        """"
-        Test if tensorflow is installed correctly
-        """
-        print(tf.reduce_sum(tf.random.normal([1000, 1000])))
+        return test_set_evaluation
 
 
 def main():
-    ms = ModelSetup()
+    """
+    Main function fo watlas_model_trainer
 
-    result, result_2, result_3 = ms.train_model()
-    print(result)
-    print(result_2)
-    print(result_3)
+    Returns: 0
+    """
+    ms = ModelTrainer()
+
+    test_set_evaluation = ms.train_model()
+    print(test_set_evaluation)
+
+    return 0
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     sys.exit(main())
