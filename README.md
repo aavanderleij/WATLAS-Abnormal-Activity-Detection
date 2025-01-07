@@ -50,3 +50,9 @@ More information on the WATLAS tracking system please reference the following pa
 
 
 Bijleveld, A.I., van Maarseveen, F., Denissen, B. et al. WATLAS: high-throughput and real-time tracking of many small birds in the Dutch Wadden Sea. Anim Biotelemetry 10, 36 (2022). https://doi.org/10.1186/s40317-022-00307-w
+
+## Contact
+
+For access and questions about the WATLAS data please contact Allert Bijleveld at Allert.Bijleveld@nioz.nl
+
+For questions regarding the code please contact me at antsjevdleij@gmail.com
