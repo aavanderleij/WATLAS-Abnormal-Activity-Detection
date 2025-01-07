@@ -44,6 +44,7 @@ Then run the following to start the program
 python -m scripts.watlas_disturbance_detect config/config.ini
 ```
 
+Output will be saved as CSV files in the output folder set in the config file.
 ## Refrences
 
 More information on the WATLAS tracking system please reference the following paper:
