@@ -19,7 +19,7 @@ This library uses conda.
 If you don't have conda, please follow this link to install conda
 https://docs.anaconda.com/miniconda/
 
-To install the nessesery enviroments run the following code from the location of this readme:
+To install the nessesery enviroments, run the following code from the location of this readme:
 
 ```
 conda env create -f env/watlas_disturbance.yaml
