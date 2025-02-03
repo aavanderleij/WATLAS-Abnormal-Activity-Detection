@@ -726,24 +726,16 @@ def speed_test():
     # get tag data from csv in config file
     watlas_df.get_tag_data()
 
-    tag_time = timeit.default_timer()
-
     # get data from sqlite file
     watlas_df.get_watlas_data(watlas_df.get_all_tags())
-
-    get_data_time = timeit.default_timer()
 
     # filter minimum localisations
     watlas_df.filter_num_localisations()
     # add species column
     watlas_df.get_species()
 
-    filter_time = timeit.default_timer()
-
     # aggregate data
     watlas_df.aggregate_dataframe()
-
-    aggregate_time = timeit.default_timer()
 
     # remove species not in species list (things like pond bats, test tags, etc)
     watlas_df.watlas_df = watlas_df.watlas_df.filter(pl.col("species").is_in(watlas_df.species_list))
